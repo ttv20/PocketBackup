@@ -17,6 +17,7 @@ import com.ttv20.rsyncbackup.R
 import com.ttv20.rsyncbackup.RsyncBackupApplication
 import com.ttv20.rsyncbackup.model.BackupLog
 import com.ttv20.rsyncbackup.model.BackupProfile
+import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.RunProgressPhase
 import com.ttv20.rsyncbackup.model.RunProgressState
 import com.ttv20.rsyncbackup.model.RunStatus
@@ -33,7 +34,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.util.Locale
-import java.util.UUID
 
 class BackupService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -73,6 +73,7 @@ class BackupService : Service() {
         val app = application as RsyncBackupApplication
         val profile = app.repository.state.value.profiles.firstOrNull { it.id == profileId } ?: return
         val runAnyway = intent.action == ACTION_RUN_ANYWAY
+        val trigger = intent.backupRunTrigger()
         val failures = BackupConstraintEvaluator.failures(
             profile = profile,
             snapshot = AndroidConstraintSnapshotReader(this).read(),
@@ -81,15 +82,23 @@ class BackupService : Service() {
 
         startForeground(NOTIFICATION_ID, runningNotification("Checking backup constraints"))
         if (failures.isNotEmpty() && !runAnyway) {
+            app.repository.recordConstraintBlockedBackup(profile, failures, trigger)
             notifyConstraintWarning(this, profile, failures)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelfResult(latestStartId)
             return
         }
 
-        app.repository.enqueueBackup(profileId)
+        app.repository.enqueueBackup(profileId, trigger = trigger)
         startQueueWorker()
     }
+
+    private fun Intent.backupRunTrigger(): BackupRunTrigger =
+        if (action == ACTION_RUN_SCHEDULED) {
+            BackupRunTrigger.AUTOMATIC
+        } else {
+            BackupRunTrigger.MANUAL
+        }
 
     private fun startQueueWorker() {
         synchronized(queueWorkerLock) {
@@ -117,6 +126,8 @@ class BackupService : Service() {
                         .firstOrNull { it.id == profileId }
                         ?.name
                         ?: profileId
+                    val trigger = app.repository.state.value.queue.runningTrigger ?: BackupRunTrigger.MANUAL
+                    val serviceStartedAt = Instant.now().toString()
                     startForeground(NOTIFICATION_ID, runningNotification("Running $profileName"))
                     startProgressNotificationObserver(app, profileId, profileName)
                     val log = try {
@@ -125,11 +136,11 @@ class BackupService : Service() {
                             repository = app.repository,
                             secretStore = app.secretStore,
                             processController = processController,
-                        ).runProfile(profileId)
+                        ).runProfile(profileId, trigger)
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {
-                        failedLog(app, profileId, profileName, error)
+                        failedLog(app, profileId, profileName, trigger, serviceStartedAt, error)
                     } finally {
                         progressNotificationJob?.cancel()
                         progressNotificationJob = null
@@ -193,31 +204,31 @@ class BackupService : Service() {
         app: RsyncBackupApplication,
         profileId: String,
         profileName: String,
+        trigger: BackupRunTrigger,
+        serviceStartedAt: String,
         error: Exception,
     ): BackupLog {
         val failedAt = Instant.now().toString()
-        val summary = "Backup failed: ${error.message ?: error.javaClass.simpleName}"
-        val log = BackupLog(
-            id = UUID.randomUUID().toString(),
+        val startedAt = app.repository.state.value.runProgress.startedAt ?: serviceStartedAt
+        val log = backupCrashLog(
             profileId = profileId,
             profileName = profileName,
-            startedAt = failedAt,
-            finishedAt = failedAt,
-            status = RunStatus.FAILED,
-            summary = summary,
-            raw = error.stackTraceToString(),
+            startedAt = startedAt,
+            trigger = trigger,
+            error = error,
+            failedAt = failedAt,
         )
         app.repository.setRunProgress(
             app.repository.state.value.runProgress.copy(
                 profileId = profileId,
                 profileName = profileName,
                 phase = RunProgressPhase.FAILED,
-                message = summary,
+                message = log.summary,
                 updatedAt = failedAt,
             ),
         )
         app.repository.appendLog(log)
-        app.repository.markProfile(profileId, RunStatus.FAILED, summary, failedAt)
+        app.repository.markProfile(profileId, RunStatus.FAILED, log.summary, failedAt)
         return log
     }
 

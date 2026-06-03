@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "RsyncBackupAndroid"
+rootProject.name = "PocketSync"
 include(":app")

@@ -7,6 +7,9 @@ import com.ttv20.rsyncbackup.RsyncBackupApplication
 import com.ttv20.rsyncbackup.backup.AndroidConstraintSnapshotReader
 import com.ttv20.rsyncbackup.backup.BackupConstraintEvaluator
 import com.ttv20.rsyncbackup.backup.BackupService
+import com.ttv20.rsyncbackup.backup.recordConstraintBlockedBackup
+import com.ttv20.rsyncbackup.backup.recordScheduledStartBlockedBackup
+import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.ScheduleType
 
 class ScheduleReceiver : BroadcastReceiver() {
@@ -37,6 +40,7 @@ class ScheduleReceiver : BroadcastReceiver() {
             selectedSsid = app.repository.state.value.settings.selectedSsid,
         )
         if (failures.isNotEmpty()) {
+            app.repository.recordConstraintBlockedBackup(profile, failures, BackupRunTrigger.AUTOMATIC)
             BackupService.notifyConstraintWarning(context, profile, failures)
             return
         }
@@ -45,6 +49,10 @@ class ScheduleReceiver : BroadcastReceiver() {
             BackupService.startScheduled(context, profileId)
         }.onFailure { error ->
             if (error.javaClass.name == "android.app.ForegroundServiceStartNotAllowedException") {
+                app.repository.recordScheduledStartBlockedBackup(
+                    profile = profile,
+                    reason = error.message ?: error.javaClass.simpleName,
+                )
                 BackupService.notifyScheduledStartBlocked(
                     context = context,
                     profile = profile,

@@ -100,8 +100,10 @@ import com.ttv20.rsyncbackup.backup.BinaryPaths
 import com.ttv20.rsyncbackup.backup.NativeBinaryManager
 import com.ttv20.rsyncbackup.backup.RsyncCommandBuilder
 import com.ttv20.rsyncbackup.model.AppState
+import com.ttv20.rsyncbackup.model.BackupEndReason
 import com.ttv20.rsyncbackup.model.BackupLog
 import com.ttv20.rsyncbackup.model.BackupProfile
+import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.BackupSchedule
 import com.ttv20.rsyncbackup.model.ConstraintSettings
 import com.ttv20.rsyncbackup.model.ExportCodec
@@ -282,7 +284,7 @@ private fun AppScaffold(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Rsync Backup") },
+                title = { Text("PocketSync") },
                 actions = {
                     Text(
                         text = screen.label,
@@ -1607,9 +1609,31 @@ private fun LogsScreen(state: AppState, repository: AppRepository) {
                     Column(Modifier.weight(1f)) {
                         Text(log.profileName, fontWeight = FontWeight.SemiBold)
                         Text(log.summary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("${log.startedAt} - ${log.finishedAt ?: "running"}", style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProgressMetric("Run", log.trigger.label())
+                    ProgressMetric("Started", log.startedAt)
+                    ProgressMetric(log.finishedLabel(), log.finishedAt ?: "running")
+                    log.endReason?.let { reason ->
+                        ProgressMetric("Reason", reason.label())
+                    }
+                }
+                log.endReasonDetail
+                    ?.takeIf { it.isNotBlank() && it != log.summary }
+                    ?.let { detail ->
+                        Text(
+                            "Reason detail: $detail",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (log.status == RunStatus.SUCCESS) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            },
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 unsuccessfulLogLastOutput(log)?.let { line ->
                     Text(
                         line,
@@ -1624,13 +1648,38 @@ private fun LogsScreen(state: AppState, repository: AppRepository) {
     }
 }
 
+private fun BackupRunTrigger.label(): String =
+    when (this) {
+        BackupRunTrigger.MANUAL -> "Manual"
+        BackupRunTrigger.AUTOMATIC -> "Automatic"
+    }
+
+private fun BackupEndReason.label(): String =
+    when (this) {
+        BackupEndReason.USER_CANCELLED -> "User cancel"
+        BackupEndReason.FORCE_STOPPED -> "Force stop"
+        BackupEndReason.NO_NETWORK -> "No network"
+        BackupEndReason.CONSTRAINTS_NOT_MET -> "Constraints"
+        BackupEndReason.CRASH -> "Crash"
+        BackupEndReason.ERROR -> "Error"
+    }
+
+private fun BackupLog.finishedLabel(): String =
+    when (status) {
+        RunStatus.CANCELLED -> "Cancelled"
+        RunStatus.FAILED -> "Finished"
+        RunStatus.SUCCESS, RunStatus.WARNING -> "Finished"
+        else -> "Finished"
+    }
+
 private fun unsuccessfulLogLastOutput(log: BackupLog): String? {
     if (log.status == RunStatus.SUCCESS || log.raw.isBlank()) return null
+    val detail = log.endReasonDetail?.trim()
     val summary = log.summary.trim()
     return log.raw
         .lineSequence()
         .map { it.trim() }
-        .filter { it.isNotBlank() && it != summary }
+        .filter { it.isNotBlank() && it != summary && it != detail }
         .lastOrNull()
 }
 

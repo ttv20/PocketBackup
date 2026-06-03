@@ -1,9 +1,11 @@
 package com.ttv20.rsyncbackup.storage
 
 import com.ttv20.rsyncbackup.model.AppState
+import com.ttv20.rsyncbackup.model.BackupEndReason
 import com.ttv20.rsyncbackup.model.BackupLog
 import com.ttv20.rsyncbackup.model.BackupQueueState
 import com.ttv20.rsyncbackup.model.BackupProfile
+import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.ExportCodec
 import com.ttv20.rsyncbackup.model.ExportDocument
 import com.ttv20.rsyncbackup.model.InitialData
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import java.time.Instant
+import java.util.UUID
 
 class AppRepository(
     private val dataFile: File,
@@ -66,6 +69,8 @@ class AppRepository(
                 queue = state.queue.copy(
                     queuedProfileIds = state.queue.queuedProfileIds.filterNot { it == profileId },
                     runningProfileId = state.queue.runningProfileId.takeIf { it != profileId },
+                    runningTrigger = state.queue.runningTrigger.takeIf { state.queue.runningProfileId != profileId },
+                    queuedTriggers = state.queue.queuedTriggers - profileId,
                 ),
             )
         }
@@ -88,17 +93,29 @@ class AppRepository(
         update { state -> state.copy(logs = emptyList()) }
     }
 
-    fun enqueueBackup(profileId: String, now: String = Instant.now().toString()) {
+    fun enqueueBackup(
+        profileId: String,
+        now: String = Instant.now().toString(),
+        trigger: BackupRunTrigger = BackupRunTrigger.MANUAL,
+    ) {
         update { state ->
             if (state.profiles.none { it.id == profileId }) return@update state
             val queue = state.queue
-            val queued = if (profileId == queue.runningProfileId || profileId in queue.queuedProfileIds) {
+            val isAlreadyQueuedOrRunning = profileId == queue.runningProfileId || profileId in queue.queuedProfileIds
+            val queued = if (isAlreadyQueuedOrRunning) {
                 queue.queuedProfileIds
             } else {
                 queue.queuedProfileIds + profileId
             }
             state.copy(
-                queue = queue.copy(queuedProfileIds = queued),
+                queue = queue.copy(
+                    queuedProfileIds = queued,
+                    queuedTriggers = if (isAlreadyQueuedOrRunning) {
+                        queue.queuedTriggers
+                    } else {
+                        queue.queuedTriggers + (profileId to trigger)
+                    },
+                ),
                 profiles = state.profiles.map { profile ->
                     if (profile.id == profileId && profile.status.lastStatus != RunStatus.RUNNING) {
                         profile.copy(
@@ -121,10 +138,13 @@ class AppRepository(
         val state = mutableState.value
         if (state.queue.runningProfileId != null) return null
         val nextProfileId = state.queue.queuedProfileIds.firstOrNull() ?: return null
+        val trigger = state.queue.queuedTriggers[nextProfileId] ?: BackupRunTrigger.MANUAL
         mutableState.value = state.copy(
             queue = BackupQueueState(
                 runningProfileId = nextProfileId,
                 queuedProfileIds = state.queue.queuedProfileIds.drop(1),
+                runningTrigger = trigger,
+                queuedTriggers = state.queue.queuedTriggers - nextProfileId,
             ),
             profiles = state.profiles.map { profile ->
                 if (profile.id == nextProfileId) {
@@ -147,7 +167,12 @@ class AppRepository(
     fun completeRunning(profileId: String) {
         update { state ->
             if (state.queue.runningProfileId == profileId) {
-                state.copy(queue = state.queue.copy(runningProfileId = null))
+                state.copy(
+                    queue = state.queue.copy(
+                        runningProfileId = null,
+                        runningTrigger = null,
+                    ),
+                )
             } else {
                 state
             }
@@ -156,9 +181,29 @@ class AppRepository(
 
     private fun recoverInterruptedRunningBackup(state: AppState): AppState {
         val interruptedProfileId = state.queue.runningProfileId ?: return state
+        val recoveredAt = Instant.now().toString()
+        val interruptedProfile = state.profiles.firstOrNull { it.id == interruptedProfileId }
+        val interruptedLog = interruptedProfile?.let { profile ->
+            BackupLog(
+                id = UUID.randomUUID().toString(),
+                profileId = profile.id,
+                profileName = profile.name,
+                startedAt = profile.status.lastRunAt ?: recoveredAt,
+                finishedAt = recoveredAt,
+                status = RunStatus.CANCELLED,
+                trigger = state.queue.runningTrigger ?: BackupRunTrigger.MANUAL,
+                endReason = BackupEndReason.CRASH,
+                endReasonDetail = "App stopped while backup was running",
+                summary = "Backup cancelled: interrupted before completion",
+                raw = "Backup interrupted before completion",
+            )
+        }
         return state.copy(
-            queue = state.queue.copy(runningProfileId = null),
+            queue = state.queue.copy(runningProfileId = null, runningTrigger = null),
             runProgress = RunProgressState(),
+            logs = interruptedLog?.let { log ->
+                (listOf(log) + state.logs).take(state.settings.logRetentionLimit.coerceAtLeast(1))
+            } ?: state.logs,
             profiles = state.profiles.map { profile ->
                 if (profile.id == interruptedProfileId && profile.status.lastStatus == RunStatus.RUNNING) {
                     profile.copy(

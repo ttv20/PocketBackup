@@ -4,6 +4,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val releaseStoreFile = providers.environmentVariable("POCKETSYNC_RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("POCKETSYNC_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("POCKETSYNC_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("POCKETSYNC_RELEASE_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.ttv20.rsyncbackup"
     compileSdk = 36
@@ -12,8 +23,11 @@ android {
         applicationId = "com.ttv20.rsyncbackup"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = providers.environmentVariable("POCKETSYNC_VERSION_CODE")
+            .map { it.toInt() }
+            .getOrElse(1)
+        versionName = providers.environmentVariable("POCKETSYNC_VERSION_NAME")
+            .getOrElse("0.1.0")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
@@ -27,6 +41,22 @@ android {
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
+        }
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

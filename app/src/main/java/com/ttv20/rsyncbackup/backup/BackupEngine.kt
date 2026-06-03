@@ -2,6 +2,7 @@ package com.ttv20.rsyncbackup.backup
 
 import android.content.Context
 import com.ttv20.rsyncbackup.model.BackupLog
+import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.BackupStatusMarker
 import com.ttv20.rsyncbackup.model.Route
 import com.ttv20.rsyncbackup.model.RunProgressPhase
@@ -26,7 +27,10 @@ class BackupEngine(
     private val nativeBinaryManager: NativeBinaryManager = NativeBinaryManager(context),
     private val processController: BackupProcessController = BackupProcessController(),
 ) {
-    suspend fun runProfile(profileId: String): BackupLog = withContext(Dispatchers.IO) {
+    suspend fun runProfile(
+        profileId: String,
+        trigger: BackupRunTrigger = BackupRunTrigger.MANUAL,
+    ): BackupLog = withContext(Dispatchers.IO) {
         val state = repository.state.value
         val profile = state.profiles.first { it.id == profileId }
         val server = state.servers.first { it.id == profile.serverId }
@@ -58,6 +62,9 @@ class BackupEngine(
                 startedAt = startedAt,
                 finishedAt = finishedAt,
                 status = RunStatus.FAILED,
+                trigger = trigger,
+                endReason = errorBackupEndReason(summary, raw),
+                endReasonDetail = summary,
                 targetHostUsed = targetHostUsed,
                 summary = summary,
                 raw = raw,
@@ -174,6 +181,9 @@ class BackupEngine(
                     startedAt = startedAt,
                     finishedAt = finishedAt,
                     status = RunStatus.CANCELLED,
+                    trigger = trigger,
+                    endReason = reason.toBackupEndReason(),
+                    endReasonDetail = reason.toBackupEndReasonDetail(),
                     targetHostUsed = targetHostUsed,
                     summary = summary,
                     raw = finalRaw(summary),
@@ -270,20 +280,24 @@ class BackupEngine(
                 23 -> "Remote target is non-empty and unmarked"
                 else -> "Remote target safety check failed with exit $prepareExit"
             }
+            val finishedAt = Instant.now().toString()
             val log = BackupLog(
                 id = UUID.randomUUID().toString(),
                 profileId = profile.id,
                 profileName = profile.name,
                 startedAt = startedAt,
-                finishedAt = Instant.now().toString(),
+                finishedAt = finishedAt,
                 status = RunStatus.FAILED,
+                trigger = trigger,
+                endReason = errorBackupEndReason(summary, output.toString()),
+                endReasonDetail = summary,
                 targetHostUsed = command.targetHost,
                 summary = summary,
                 raw = output.toString(),
             )
             updateProgress(RunProgressPhase.FAILED, summary, persist = true)
             repository.appendLog(log)
-            repository.markProfile(profile.id, RunStatus.FAILED, summary)
+            repository.markProfile(profile.id, RunStatus.FAILED, summary, finishedAt)
             return@withContext log
         }
 
@@ -362,6 +376,7 @@ class BackupEngine(
             }
         }
 
+        val raw = finalRaw(summary)
         val log = BackupLog(
             id = UUID.randomUUID().toString(),
             profileId = profile.id,
@@ -369,10 +384,17 @@ class BackupEngine(
             startedAt = startedAt,
             finishedAt = finishedAt,
             status = status,
+            trigger = trigger,
+            endReason = if (status == RunStatus.FAILED) {
+                errorBackupEndReason(summary, raw)
+            } else {
+                null
+            },
+            endReasonDetail = if (status == RunStatus.FAILED) summary else null,
             exitCode = exitCode,
             targetHostUsed = command.targetHost,
             summary = summary,
-            raw = finalRaw(summary),
+            raw = raw,
         )
         updateProgress(
             phase = if (status == RunStatus.FAILED) RunProgressPhase.FAILED else RunProgressPhase.COMPLETED,

@@ -1,6 +1,8 @@
 package com.ttv20.rsyncbackup.storage
 
+import com.ttv20.rsyncbackup.model.BackupEndReason
 import com.ttv20.rsyncbackup.model.BackupProfile
+import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.RunProgressPhase
 import com.ttv20.rsyncbackup.model.RunProgressState
 import com.ttv20.rsyncbackup.model.RunStatus
@@ -55,10 +57,32 @@ class AppRepositoryQueueTest {
     }
 
     @Test
+    fun queuePreservesRunTrigger() {
+        val repository = repository()
+
+        repository.enqueueBackup(
+            profileId = "profile-phone",
+            now = "2026-06-03T01:00:00Z",
+            trigger = BackupRunTrigger.AUTOMATIC,
+        )
+
+        assertEquals("profile-phone", repository.startNextQueued(now = "2026-06-03T01:00:01Z"))
+        assertEquals(BackupRunTrigger.AUTOMATIC, repository.state.value.queue.runningTrigger)
+
+        repository.completeRunning("profile-phone")
+
+        assertNull(repository.state.value.queue.runningTrigger)
+    }
+
+    @Test
     fun loadClearsInterruptedRunningJob() {
         val dataFile = temporaryFolder.newFile("state.json")
         val repository = repository(dataFile)
-        repository.enqueueBackup("profile-phone", now = "2026-06-03T01:00:00Z")
+        repository.enqueueBackup(
+            profileId = "profile-phone",
+            now = "2026-06-03T01:00:00Z",
+            trigger = BackupRunTrigger.AUTOMATIC,
+        )
         repository.startNextQueued(now = "2026-06-03T01:00:01Z")
 
         val restored = repository(dataFile)
@@ -67,6 +91,11 @@ class AppRepositoryQueueTest {
         val profile = restored.state.value.profiles.single { it.id == "profile-phone" }
         assertEquals(RunStatus.CANCELLED, profile.status.lastStatus)
         assertEquals("Backup interrupted before completion", profile.status.lastMessage)
+        val log = restored.state.value.logs.first()
+        assertEquals(RunStatus.CANCELLED, log.status)
+        assertEquals(BackupRunTrigger.AUTOMATIC, log.trigger)
+        assertEquals(BackupEndReason.CRASH, log.endReason)
+        assertEquals("2026-06-03T01:00:01Z", log.startedAt)
     }
 
     @Test

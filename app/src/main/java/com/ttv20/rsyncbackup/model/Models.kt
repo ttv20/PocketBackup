@@ -149,6 +149,8 @@ enum class RunStatus {
 data class BackupQueueState(
     val runningProfileId: String? = null,
     val queuedProfileIds: List<String> = emptyList(),
+    val runningTrigger: BackupRunTrigger? = null,
+    val queuedTriggers: Map<String, BackupRunTrigger> = emptyMap(),
 )
 
 @Serializable
@@ -194,11 +196,30 @@ data class BackupLog(
     val startedAt: String,
     val finishedAt: String? = null,
     val status: RunStatus,
+    val trigger: BackupRunTrigger = BackupRunTrigger.MANUAL,
+    val endReason: BackupEndReason? = null,
+    val endReasonDetail: String? = null,
     val exitCode: Int? = null,
     val targetHostUsed: String? = null,
     val summary: String = "",
     val raw: String = "",
 )
+
+@Serializable
+enum class BackupRunTrigger {
+    MANUAL,
+    AUTOMATIC,
+}
+
+@Serializable
+enum class BackupEndReason {
+    USER_CANCELLED,
+    FORCE_STOPPED,
+    NO_NETWORK,
+    CONSTRAINTS_NOT_MET,
+    CRASH,
+    ERROR,
+}
 
 object InitialData {
     const val DEFAULT_SERVER_ID = "server-home"

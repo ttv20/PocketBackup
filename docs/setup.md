@@ -1,6 +1,6 @@
 # Setup And Server Requirements
 
-Rsync Backup Android is a personal sideload app for backup-only rsync-over-SSH
+PocketSync is a personal sideload app for backup-only rsync-over-SSH
 workflows. It does not provide a restore workflow in the first release.
 
 ## Android Setup
