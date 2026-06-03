@@ -1,0 +1,153 @@
+Termux package snapshot for bundled Android arm64 native tools
+Repository: https://packages.termux.dev/apt/termux-main
+Index: https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages
+
+Package: rsync
+Version: 3.4.3-1
+Filename: pool/main/r/rsync/rsync_3.4.3-1_aarch64.deb
+SHA256: eb19426784f367fee6af298f56526eb90ee9ea1a10bb3fdee5a70c1155120ec2
+Homepage: https://rsync.samba.org/
+
+Package: libiconv
+Version: 1.18-1
+Filename: pool/main/libi/libiconv/libiconv_1.18-1_aarch64.deb
+SHA256: b19e6f348034bb48d2a5590b5cb242769f682c476717374d134d004cc663dc84
+Homepage: https://www.gnu.org/software/libiconv/
+
+Package: liblz4
+Version: 1.10.0-1
+Filename: pool/main/libl/liblz4/liblz4_1.10.0-1_aarch64.deb
+SHA256: 09b9449418d5c2dc4f5c1c140ba8138d56be3e9ae5fd3be3318825ec9f8a0499
+Homepage: https://lz4.github.io/lz4/
+
+Package: libpopt
+Version: 1.19-3
+Filename: pool/main/libp/libpopt/libpopt_1.19-3_aarch64.deb
+SHA256: 8de7d28d5bb749fa1e38d229638e2f0b8c15bddd9d0eae3217b7a52fe5668145
+Homepage: https://www.linuxfromscratch.org/blfs/view/svn/general/popt.html
+
+Package: libandroid-glob
+Version: 0.6-3
+Filename: pool/main/liba/libandroid-glob/libandroid-glob_0.6-3_aarch64.deb
+SHA256: 2276ae8adedf0db76c2f4ffc94cc4cceb2f4f5d78e021b54e2e046d1233e7826
+Homepage: https://man7.org/linux/man-pages/man3/glob.3.html
+
+Package: openssh
+Version: 10.3p1-1
+Filename: pool/main/o/openssh/openssh_10.3p1-1_aarch64.deb
+SHA256: 1e869d4150a24cab7e6f36d7d3d559e573ef60084588b82d7ef784b5659ffcfd
+Homepage: https://www.openssh.com/
+
+Package: krb5
+Version: 1.22.2
+Filename: pool/main/k/krb5/krb5_1.22.2_aarch64.deb
+SHA256: 3c97dcc7437616bb4051297822915bd2ff9552e63a5fbee2520db3fc0c5b575d
+Homepage: https://web.mit.edu/kerberos
+
+Package: libandroid-support
+Version: 29-1
+Filename: pool/main/liba/libandroid-support/libandroid-support_29-1_aarch64.deb
+SHA256: f2f145d6135ad4843ac9670153be3e3944dc1e6f1736d46d2306c28f2b86f517
+Homepage: https://github.com/termux/libandroid-support
+
+Package: libresolv-wrapper
+Version: 1.1.7-6
+Filename: pool/main/libr/libresolv-wrapper/libresolv-wrapper_1.1.7-6_aarch64.deb
+SHA256: 788de09ffcc307bdbaf541dbe06cf79e54d8a2390fef1223727ee33d9bdfee9e
+Homepage: https://cwrap.org/resolv_wrapper.html
+
+Package: resolv-conf
+Version: 1.3
+Filename: pool/main/r/resolv-conf/resolv-conf_1.3_aarch64.deb
+SHA256: ab541abac8e0c81709cd7ca4a02bcfa0d60ba1f4bfe7fd6dce4a694a4a9dfffa
+Homepage: https://man7.org/linux/man-pages/man5/resolv.conf.5.html
+
+Package: readline
+Version: 8.3.3
+Filename: pool/main/r/readline/readline_8.3.3_aarch64.deb
+SHA256: e50fb67f40753247dbb83efb17c7fbee0ac868ffcb5b5555d44d76ec8d90b4b1
+Homepage: https://tiswww.case.edu/php/chet/readline/rltop.html
+
+Package: ncurses
+Version: 6.6.20260307+really6.5.20250830
+Filename: pool/main/n/ncurses/ncurses_6.6.20260307+really6.5.20250830_aarch64.deb
+SHA256: f44bbfdc3d42ec0217bffa978309390e59cea5a48a9a83226d4a496c42ad0b99
+Homepage: https://invisible-island.net/ncurses/
+
+Package: openssl
+Version: 1:3.6.2
+Filename: pool/main/o/openssl/openssl_1:3.6.2_aarch64.deb
+SHA256: 6b55190e4a86affb8a3ed15e25e18fbfd8608cc5c65df45c70fc72abc9772a14
+Homepage: https://www.openssl.org/
+
+Package: ca-certificates
+Version: 1:2026.05.14
+Filename: pool/main/c/ca-certificates/ca-certificates_1:2026.05.14_all.deb
+SHA256: bd33b67306070679387e3b999590a0645eccce195017e1e10b76df9dd0c81d1d
+Homepage: https://curl.se/docs/caextract.html
+
+Package: zlib
+Version: 1.3.2
+Filename: pool/main/z/zlib/zlib_1.3.2_aarch64.deb
+SHA256: 75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9
+Homepage: https://www.zlib.net/
+
+Package: libdb
+Version: 18.1.40-5
+Filename: pool/main/libd/libdb/libdb_18.1.40-5_aarch64.deb
+SHA256: 86be427275c64d8facf7fbfd4fbbc6e86cdd6e865c8fbdecf1a9197a1183b9d8
+Homepage: https://www.oracle.com/database/berkeley-db
+
+Package: libc++
+Version: 29
+Filename: pool/main/libc/libc++/libc++_29_aarch64.deb
+SHA256: bb9f12113c137aa0e8513bb51cc49fe77a5ce3ca39ab9e92c57d228ecdf00222
+Homepage: https://libcxx.llvm.org/
+
+Package: ldns
+Version: 1.8.4-1
+Filename: pool/main/l/ldns/ldns_1.8.4-1_aarch64.deb
+SHA256: 8bd23534a13f8743458bf4c0add9bb30addee5f3f088c0b00c525a404e4097a4
+Homepage: https://www.nlnetlabs.nl/projects/ldns/
+
+Package: libedit
+Version: 20240517-3.1-1
+Filename: pool/main/libe/libedit/libedit_20240517-3.1-1_aarch64.deb
+SHA256: 1c16c4da6b5efd9682c1757b5b87761d6f97e7547ac66f70b083488bf2ebe9cf
+Homepage: https://thrysoee.dk/editline/
+
+Package: openssh-sftp-server
+Version: 10.3p1-1
+Filename: pool/main/o/openssh-sftp-server/openssh-sftp-server_10.3p1-1_aarch64.deb
+SHA256: 02721baf5ed6a42ce7667f4b09219ba354628310add3f92417635082689fa592
+Homepage: https://www.openssh.com/
+
+Package: termux-auth
+Version: 1.5.0-1
+Filename: pool/main/t/termux-auth/termux-auth_1.5.0-1_aarch64.deb
+SHA256: 917f431ae85368deccf3a859e66fa9c9e99d354a0e948fc5ba174ce0359b37a9
+Homepage: https://github.com/termux/termux-auth
+
+Package: openssl-tool
+Version: 1:3.6.2
+Filename: pool/main/o/openssl-tool/openssl-tool_1:3.6.2_aarch64.deb
+SHA256: 45112fedb4e3641d04692d444242ed488b50082e065f8b8df7abb30008b3c571
+Homepage: https://www.openssl.org/
+
+Package: xxhash
+Version: 0.8.3-1
+Filename: pool/main/x/xxhash/xxhash_0.8.3-1_aarch64.deb
+SHA256: 3c8b8d271cc98348cae58a4b500238f165b032103c2eef397a8402ba34b00df1
+Homepage: https://cyan4973.github.io/xxHash/
+
+Package: zstd
+Version: 1.5.7-1
+Filename: pool/main/z/zstd/zstd_1.5.7-1_aarch64.deb
+SHA256: e1b4a5113648da8de189620ba1fce74c48b2d0833d9043391b9a1c91fb606fd3
+Homepage: https://github.com/facebook/zstd
+
+Package: liblzma
+Version: 5.8.3
+Filename: pool/main/libl/liblzma/liblzma_5.8.3_aarch64.deb
+SHA256: 594925a313879f590fbd24050305551a78eadd9a9319f6e612389b1a521113c6
+Homepage: https://tukaani.org/xz/

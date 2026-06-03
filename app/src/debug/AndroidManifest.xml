@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".debug.DebugBackupSmokeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.ttv20.rsyncbackup.debug.RUN_BACKUP_SMOKE" />
+                <action android:name="com.ttv20.rsyncbackup.debug.SCHEDULE_CONSTRAINT_SMOKE" />
+                <action android:name="com.ttv20.rsyncbackup.debug.TAILSCALE_FAILURE_SMOKE" />
+                <action android:name="com.ttv20.rsyncbackup.debug.TAILSCALE_LIVE_SMOKE" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

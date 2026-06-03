@@ -1,0 +1,44 @@
+.rsync-partial/
+.thumbnails/
+.Trash*/
+.trashed*
+cache/
+Cache/
+caches/
+Caches/
+thumbnails/
+Thumbnails/
+*/cache/***
+*/Cache/***
+*/caches/***
+*/Caches/***
+*/thumbnails/***
+*/Thumbnails/***
+/Torrents/***
+/Podcasts/***
+/Podcasts-custom/***
+/Android/data/***
+/Android/oob/***
+/Android/obb/***
+*.apk
+*.APK
+*.apks
+*.APKS
+*.mapk
+*.MAPK
+*.xapk
+*.XAPK
+*.abb
+*.ABB
+/Android/media/com.whatsapp/WhatsApp/.*/***
+/Android/media/com.whatsapp/WhatsApp Business/.*/***
+/Android/media/com.whatsapp.w4b/WhatsApp/.*/***
+/Android/media/com.whatsapp.w4b/WhatsApp Business/.*/***
+/Android/media/com.whatsapp/WhatsApp/Media/.*/***
+/Android/media/com.whatsapp/WhatsApp Business/Media/.*/***
+/Android/media/com.whatsapp.w4b/WhatsApp/Media/.*/***
+/Android/media/com.whatsapp.w4b/WhatsApp Business/Media/.*/***
+/Android/media/com.whatsapp/WhatsApp/Databases/msgstore-*
+/Android/media/com.whatsapp/WhatsApp Business/Databases/msgstore-*
+/Android/media/com.whatsapp.w4b/WhatsApp/Databases/msgstore-*
+/Android/media/com.whatsapp.w4b/WhatsApp Business/Databases/msgstore-*
