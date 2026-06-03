@@ -15,6 +15,7 @@ local.properties
 .env
 .env.*
 !.env.example
+*.md
 *.apk
 *.ap_
 *.aab
