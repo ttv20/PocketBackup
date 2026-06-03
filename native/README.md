@@ -38,4 +38,6 @@ the APK assets:
 ./scripts/stage-native-assets.sh
 ```
 
-`rsync` is GPL; release source and notices must remain GPL-compatible.
+Original PocketSync code is 0BSD, but bundled native components keep their
+own upstream licenses. `rsync` is GPL-covered; release source and notices must
+preserve the GPL and other third-party license obligations.

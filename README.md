@@ -61,6 +61,13 @@ TS_AUTHKEY=... ./scripts/ampere-redroid-tailscale-live-smoke.sh
 
 Setup and server requirements are documented in [docs/setup.md](docs/setup.md).
 
+## License
+
+Original PocketSync code and documentation are released under `0BSD`: use,
+copy, modify, publish, sell, or relicense it without attribution. Bundled
+third-party components keep their own licenses; see [LICENSE.md](LICENSE.md)
+and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Release
 
 The GitHub Actions workflow in `.github/workflows/release-apk.yml` runs on

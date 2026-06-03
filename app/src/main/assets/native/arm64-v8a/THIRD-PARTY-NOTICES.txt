@@ -1,0 +1,18 @@
+PocketSync native asset notices
+
+Original PocketSync source code is 0BSD. Bundled native tools keep their own
+upstream licenses.
+
+Native package snapshot:
+  termux-packages.txt
+
+Extracted native package notices:
+  termux-docs/
+
+GPL text for GPL-covered bundled components such as rsync:
+  COPYING-GPL-3.0
+
+The built-in Tailscale client helper is packaged as tsnet-nc. It is built from
+native/tsnet-helper and depends on tailscale.com plus the Go modules listed in
+native/tsnet-helper/go.mod and native/tsnet-helper/go.sum. Preserve upstream
+notices when redistributing the helper binary.

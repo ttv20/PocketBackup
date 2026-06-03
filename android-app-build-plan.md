@@ -501,7 +501,9 @@ Release artifacts:
 - Prebuilt arm64 native binaries for release builds
 - Documentation for setup and server requirements
 
-The project must be GPL-compatible because rsync is GPL.
+Original app code can be permissive, but release packaging must preserve
+third-party license obligations because bundled components include GPL-covered
+software such as `rsync`.
 
 Documentation should clearly state:
 
