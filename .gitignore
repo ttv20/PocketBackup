@@ -11,6 +11,8 @@ app/build/
 **/.cxx/
 captures/
 artifacts/
+docs/
+scripts/ampere*
 local.properties
 .env
 .env.*
