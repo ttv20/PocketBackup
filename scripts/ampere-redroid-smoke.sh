@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-host="${AMPERE_HOST:-ubuntu@ampere-host}"
+host="${AMPERE_HOST:?AMPERE_HOST is required, for example ubuntu@ampere-host}"
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 remote_dir="${AMPERE_PROJECT_DIR:-/home/ubuntu/rsync-backup-android}"
 container="${REDROID_CONTAINER:-rsync-redroid}"

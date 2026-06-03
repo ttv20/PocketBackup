@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-PocketSync includes third-party software. Original PocketSync code is 0BSD, but
+PocketSync includes third-party software. Original PocketSync code is MIT, but
 these third-party components keep their own upstream licenses and notice
 requirements.
 

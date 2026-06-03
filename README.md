@@ -53,20 +53,22 @@ Run tests:
 ./scripts/ampere-redroid-tailscale-failure-smoke.sh
 ```
 
+The Ampere/redroid scripts require `AMPERE_HOST`, for example
+`AMPERE_HOST=ubuntu@your-ampere-host ./scripts/ampere-redroid-smoke.sh`.
+
 Live Tailscale validation requires a tailnet auth key:
 
 ```bash
-TS_AUTHKEY=... ./scripts/ampere-redroid-tailscale-live-smoke.sh
+AMPERE_HOST=ubuntu@your-ampere-host TS_AUTHKEY=... ./scripts/ampere-redroid-tailscale-live-smoke.sh
 ```
 
 Setup and server requirements are documented in [docs/setup.md](docs/setup.md).
 
 ## License
 
-Original PocketSync code and documentation are released under `0BSD`: use,
-copy, modify, publish, sell, or relicense it without attribution. Bundled
-third-party components keep their own licenses; see [LICENSE.md](LICENSE.md)
-and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Original PocketSync code and documentation are released under the `MIT`
+License. Bundled third-party components keep their own licenses; see
+[LICENSE.md](LICENSE.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Release
 

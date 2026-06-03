@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-host="${AMPERE_HOST:-ubuntu@ampere-host}"
+host="${AMPERE_HOST:?AMPERE_HOST is required, for example ubuntu@ampere-host}"
 serial="${ANDROID_SERIAL:-127.0.0.1:5555}"
 package="com.ttv20.rsyncbackup"
 action="com.ttv20.rsyncbackup.debug.TAILSCALE_FAILURE_SMOKE"

@@ -12,6 +12,9 @@ app/build/
 captures/
 artifacts/
 local.properties
+.env
+.env.*
+!.env.example
 *.apk
 *.ap_
 *.aab

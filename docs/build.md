@@ -29,6 +29,9 @@ SDK platforms through Android 36. The project target SDK is 36 and min SDK is
 
 ## Commands
 
+The Ampere/redroid smoke scripts require `AMPERE_HOST`, for example
+`AMPERE_HOST=ubuntu@your-ampere-host ./scripts/ampere-redroid-smoke.sh`.
+
 ```bash
 ./scripts/fetch-termux-native-binaries.py
 ./scripts/build-tsnet-helper.sh
@@ -48,7 +51,7 @@ SDK platforms through Android 36. The project target SDK is 36 and min SDK is
 ./scripts/ampere-redroid-schedule-constraint-smoke.sh
 ./scripts/ampere-redroid-exact-denial-smoke.sh
 ./scripts/ampere-redroid-tailscale-failure-smoke.sh
-TS_AUTHKEY=... ./scripts/ampere-redroid-tailscale-live-smoke.sh
+AMPERE_HOST=ubuntu@your-ampere-host TS_AUTHKEY=... ./scripts/ampere-redroid-tailscale-live-smoke.sh
 ```
 
 Build artifacts:
