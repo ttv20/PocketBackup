@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material.icons.outlined.VpnKey
 import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
@@ -1169,6 +1170,10 @@ private fun SshKeysScreen(state: AppState, repository: AppRepository, secretStor
     var customKey by rememberSaveable { mutableStateOf("") }
     var passphrase by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
+    var showDeleteWarning by rememberSaveable { mutableStateOf(false) }
+    val hasConfiguredSshKey = state.sshKeySettings.publicKey != null ||
+        state.sshKeySettings.privateKeySecretAlias != null ||
+        state.sshKeySettings.passphraseSecretAlias != null
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1184,29 +1189,79 @@ private fun SshKeysScreen(state: AppState, repository: AppRepository, secretStor
                     Text("Generated key", style = MaterialTheme.typography.titleMedium)
                     Text(state.sshKeySettings.generatedAt ?: "No generated key")
                 }
-                Button(
-                    onClick = {
-                    runCatching { SshKeyManager(secretStore).generateEd25519() }
-                        .onSuccess { key ->
-                            repository.update { appState ->
-                                appState.copy(
-                                    sshKeySettings = GlobalSshKeySettings(
-                                        publicKey = key.publicKey,
-                                        privateKeySecretAlias = key.privateKeyAlias,
-                                        generatedAt = key.generatedAt,
-                                    ),
-                                )
-                            }
-                            error = null
-                        }
-                        .onFailure { error = it.message }
-                    },
-                    modifier = Modifier.testTag("ssh-generate-key-button"),
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Outlined.VpnKey, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Generate")
+                    Button(
+                        onClick = {
+                            runCatching { SshKeyManager(secretStore).generateEd25519() }
+                                .onSuccess { key ->
+                                    repository.update { appState ->
+                                        appState.copy(
+                                            sshKeySettings = GlobalSshKeySettings(
+                                                publicKey = key.publicKey,
+                                                privateKeySecretAlias = key.privateKeyAlias,
+                                                generatedAt = key.generatedAt,
+                                            ),
+                                        )
+                                    }
+                                    error = null
+                                }
+                                .onFailure { error = it.message }
+                        },
+                        modifier = Modifier.testTag("ssh-generate-key-button"),
+                    ) {
+                        Icon(Icons.Outlined.VpnKey, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Generate")
+                    }
+                    if (hasConfiguredSshKey) {
+                        OutlinedButton(
+                            onClick = { showDeleteWarning = true },
+                            modifier = Modifier.testTag("ssh-delete-key-button"),
+                        ) {
+                            Icon(Icons.Outlined.Delete, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Delete key")
+                        }
+                    }
                 }
+            }
+            if (showDeleteWarning) {
+                AlertDialog(
+                    onDismissRequest = { showDeleteWarning = false },
+                    icon = { Icon(Icons.Outlined.Warning, contentDescription = null) },
+                    title = { Text("Delete SSH key?") },
+                    text = {
+                        Text("Backups cannot authenticate until you generate or store another SSH key. This removes the private key and passphrase from secure storage.")
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                runCatching {
+                                    SshKeyManager(secretStore).deleteConfiguredKey(state.sshKeySettings)
+                                    repository.update { appState ->
+                                        appState.copy(sshKeySettings = GlobalSshKeySettings())
+                                    }
+                                }.onSuccess {
+                                    error = null
+                                    showDeleteWarning = false
+                                }.onFailure {
+                                    error = it.message
+                                }
+                            },
+                            modifier = Modifier.testTag("ssh-confirm-delete-key-button"),
+                        ) {
+                            Text("Delete")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDeleteWarning = false }) {
+                            Text("Cancel")
+                        }
+                    },
+                )
             }
             if (state.sshKeySettings.publicKey != null) {
                 CopyableBlock(

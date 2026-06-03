@@ -1,11 +1,13 @@
 package com.ttv20.rsyncbackup.ssh
 
+import com.ttv20.rsyncbackup.model.GlobalSshKeySettings
 import com.ttv20.rsyncbackup.storage.SecretStore
 import java.nio.ByteBuffer
 import java.util.Base64
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,6 +27,25 @@ class SshKeyManagerTest {
         val publicKeyBlob = ByteBuffer.wrap(Base64.getDecoder().decode(publicKeyParts[1]))
         assertArrayEquals("ssh-ed25519".toByteArray(Charsets.US_ASCII), publicKeyBlob.readBytes())
         assertEquals(32, publicKeyBlob.readBytes().size)
+    }
+
+    @Test
+    fun deleteConfiguredKeyRemovesPrivateKeyAndPassphraseSecrets() {
+        val secretStore = InMemorySecretStore()
+        secretStore.put("private-key", "private".toByteArray())
+        secretStore.put("passphrase", "passphrase".toByteArray())
+        secretStore.put("unrelated", "unrelated".toByteArray())
+
+        SshKeyManager(secretStore).deleteConfiguredKey(
+            GlobalSshKeySettings(
+                privateKeySecretAlias = "private-key",
+                passphraseSecretAlias = "passphrase",
+            ),
+        )
+
+        assertNull(secretStore.get("private-key"))
+        assertNull(secretStore.get("passphrase"))
+        assertEquals("unrelated", secretStore.get("unrelated")?.toString(Charsets.UTF_8))
     }
 
     private fun ByteBuffer.readBytes(): ByteArray {

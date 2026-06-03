@@ -1,5 +1,6 @@
 package com.ttv20.rsyncbackup.ssh
 
+import com.ttv20.rsyncbackup.model.GlobalSshKeySettings
 import com.ttv20.rsyncbackup.storage.SecretStore
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.nio.ByteBuffer
@@ -28,6 +29,12 @@ class SshKeyManager(private val secretStore: SecretStore) {
 
     fun storeCustomPrivateKey(alias: String, privateKey: String) {
         secretStore.put(alias, privateKey.toByteArray(Charsets.UTF_8))
+    }
+
+    fun deleteConfiguredKey(settings: GlobalSshKeySettings) {
+        listOfNotNull(settings.privateKeySecretAlias, settings.passphraseSecretAlias)
+            .distinct()
+            .forEach(secretStore::delete)
     }
 
     private fun generateEd25519KeyPair(): KeyPair {
