@@ -5,7 +5,11 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 verify_native() {
   local name="$1"
-  local path="$project_dir/native/out/arm64-v8a/$name"
+  local path="$project_dir/native/fdroid-out/assets/native/arm64-v8a/$name"
+
+  if [ ! -e "$path" ]; then
+    path="$project_dir/native/out/arm64-v8a/$name"
+  fi
 
   if [ ! -x "$path" ]; then
     printf 'Missing executable native output: %s\n' "$path" >&2

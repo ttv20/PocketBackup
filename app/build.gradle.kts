@@ -14,6 +14,8 @@ val hasReleaseSigning = listOf(
     releaseKeyAlias,
     releaseKeyPassword,
 ).all { !it.isNullOrBlank() }
+val fdroidNativeAssetsDir = rootProject.layout.projectDirectory.dir("native/fdroid-out/assets")
+val fdroidNativeJniLibsDir = rootProject.layout.projectDirectory.dir("native/fdroid-out/jniLibs")
 
 android {
     namespace = "com.ttv20.rsyncbackup"
@@ -58,6 +60,11 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
+        create("fdroidDebug") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+            signingConfig = signingConfigs.getByName("debug")
+        }
         create("fdroidRelease") {
             initWith(getByName("release"))
             matchingFallbacks += listOf("release")
@@ -74,8 +81,16 @@ android {
             assets.srcDir("src/sideload/assets")
             jniLibs.srcDir("src/sideload/jniLibs")
         }
-        getByName("fdroidRelease") {
+        getByName("fdroidDebug") {
+            assets.srcDir("src/fdroidRelease/assets")
+            assets.srcDir(fdroidNativeAssetsDir.asFile)
             assets.srcDir(layout.buildDirectory.get().asFile.resolve("generated/fdroidNativeManifest/assets"))
+            jniLibs.srcDir(fdroidNativeJniLibsDir.asFile)
+        }
+        getByName("fdroidRelease") {
+            assets.srcDir(fdroidNativeAssetsDir.asFile)
+            assets.srcDir(layout.buildDirectory.get().asFile.resolve("generated/fdroidNativeManifest/assets"))
+            jniLibs.srcDir(fdroidNativeJniLibsDir.asFile)
         }
     }
 
@@ -125,6 +140,7 @@ dependencies {
 
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
@@ -136,7 +152,7 @@ val generateFdroidNativeManifest by tasks.registering {
     val androidImage = providers.environmentVariable("RSYNC_BACKUP_ANDROID_IMAGE")
         .orElse("cimg/android:2025.12")
     val nativeImage = providers.environmentVariable("GO_ANDROID_IMAGE")
-        .orElse("golang:1.25-bookworm")
+        .orElse("golang:1.26-bookworm")
 
     inputs.property("sourceRefs", sourceRefs)
     inputs.property("androidImage", androidImage)
@@ -166,20 +182,68 @@ val checkFdroidNoPrebuiltNative by tasks.registering(Exec::class) {
     commandLine(rootProject.file("scripts/fdroid-scan-source.sh"), "--gradle")
 }
 
-tasks.matching {
-    it.name == "preFdroidReleaseBuild" || it.name == "mergeFdroidReleaseAssets"
-}.configureEach {
-    dependsOn(checkFdroidNoPrebuiltNative)
+val checkFdroidGeneratedNative by tasks.registering {
+    val requiredNativeAssets = listOf(
+        "native/arm64-v8a/rsync",
+        "native/arm64-v8a/ssh",
+        "native/arm64-v8a/ssh-keygen",
+        "native/arm64-v8a/ssh-keyscan",
+        "native/arm64-v8a/scp",
+        "native/arm64-v8a/sftp",
+        "native/arm64-v8a/tsnet-nc",
+        "native/arm64-v8a/lib/libcrypto.so.3",
+        "native/arm64-v8a/lib/libz.so.1",
+    )
+    val requiredNativeLibraries = listOf(
+        "arm64-v8a/librsync_exec.so",
+        "arm64-v8a/libssh_exec.so",
+        "arm64-v8a/libssh_keygen_exec.so",
+        "arm64-v8a/libssh_keyscan_exec.so",
+        "arm64-v8a/libscp_exec.so",
+        "arm64-v8a/libsftp_exec.so",
+        "arm64-v8a/libtsnet_nc_exec.so",
+        "arm64-v8a/libcrypto.so.3",
+        "arm64-v8a/libz.so.1",
+    )
+    val requiredFiles = requiredNativeAssets.map { fdroidNativeAssetsDir.file(it).asFile } +
+        requiredNativeLibraries.map { fdroidNativeJniLibsDir.file(it).asFile }
+    val projectDirPath = rootProject.projectDir.toPath()
+
+    inputs.files(requiredFiles)
+
+    doLast {
+        val missing = requiredFiles
+            .filterNot { it.exists() }
+            .map { projectDirPath.relativize(it.toPath()).toString() }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "Missing generated F-Droid native assets:\n" +
+                    missing.joinToString(separator = "\n") { "  $it" } +
+                    "\nRun ./scripts/docker-fdroid-build-native.sh --from-source before building fdroidDebug or fdroidRelease.",
+            )
+        }
+    }
 }
 
 tasks.matching {
-    it.name == "mergeFdroidReleaseAssets"
+    it.name == "preFdroidDebugBuild" ||
+        it.name == "preFdroidReleaseBuild" ||
+        it.name == "mergeFdroidDebugAssets" ||
+        it.name == "mergeFdroidReleaseAssets"
+}.configureEach {
+    dependsOn(checkFdroidNoPrebuiltNative)
+    dependsOn(checkFdroidGeneratedNative)
+}
+
+tasks.matching {
+    it.name == "mergeFdroidDebugAssets" || it.name == "mergeFdroidReleaseAssets"
 }.configureEach {
     dependsOn(generateFdroidNativeManifest)
 }
 
 tasks.matching {
-    it.name.contains("FdroidRelease") && it.name != "generateFdroidNativeManifest"
+    (it.name.contains("FdroidDebug") || it.name.contains("FdroidRelease")) &&
+        it.name != "generateFdroidNativeManifest"
 }.configureEach {
     dependsOn(generateFdroidNativeManifest)
 }

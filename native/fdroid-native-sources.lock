@@ -1,0 +1,14 @@
+# Native source-build inputs for F-Droid variants.
+#
+# The Android-native rsync/OpenSSH stack is built from Termux package recipes
+# because those recipes carry the upstream source URLs, SHA-256 checksums, and
+# Android cross-compile patches needed for bionic.
+
+termux-packages git https://github.com/termux/termux-packages.git 88d98e7ebaf354372db40e559fcca128455a73b7
+termux-builder-image ghcr.io/termux/package-builder@sha256:6b5570a0f59747700ab93f56541939e72725b88c8749240ff214c4f054909967
+termux-package rsync
+termux-package openssh
+termux-package zstd
+termux-arch aarch64
+
+tsnet-helper path native/tsnet-helper go.mod go.sum

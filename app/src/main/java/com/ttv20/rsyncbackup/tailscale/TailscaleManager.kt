@@ -1,6 +1,7 @@
 package com.ttv20.rsyncbackup.tailscale
 
 import android.content.Context
+import android.util.Log
 import com.ttv20.rsyncbackup.backup.NativeBinaryManager
 import com.ttv20.rsyncbackup.storage.SecretStore
 import java.io.ByteArrayInputStream
@@ -126,6 +127,7 @@ class TailscaleManager(
             )
         }
 
+        Log.i(TAG, "Running tsnet helper: ${args.joinToString(" ")}")
         val processBuilder = ProcessBuilder(listOf(nativeInstall.paths.tsnetHelper) + args)
             .directory(context.filesDir)
             .redirectErrorStream(true)
@@ -146,6 +148,7 @@ class TailscaleManager(
         val finished = process.waitFor(timeoutSeconds + 10, TimeUnit.SECONDS)
         if (!finished) {
             process.destroyForcibly()
+            Log.w(TAG, "Tailscale helper timed out: ${args.joinToString(" ")}")
             return TailscaleCommandResult(
                 success = false,
                 exitCode = null,
@@ -154,6 +157,11 @@ class TailscaleManager(
         }
         val output = process.inputStream.bufferedReader().readText().trim()
         val exitCode = process.exitValue()
+        if (exitCode == 0) {
+            Log.i(TAG, "Tailscale helper succeeded: ${output.take(MAX_LOG_OUTPUT)}")
+        } else {
+            Log.w(TAG, "Tailscale helper failed exit=$exitCode: ${output.take(MAX_LOG_OUTPUT)}")
+        }
         return TailscaleCommandResult(
             success = exitCode == 0,
             exitCode = exitCode,
@@ -162,6 +170,8 @@ class TailscaleManager(
     }
 
     companion object {
+        private const val TAG = "PocketSyncTailscale"
+        private const val MAX_LOG_OUTPUT = 4000
         const val STATE_SECRET_ALIAS = "tailscale-state"
 
         fun archiveDirectory(directory: File): ByteArray {

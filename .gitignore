@@ -11,13 +11,15 @@ app/build/
 **/.cxx/
 captures/
 artifacts/
-docs/
+docs/*
 scripts/ampere*
+!scripts/ampere-redroid-onboarding-screenshots.sh
 local.properties
 .env
 .env.*
 !.env.example
 *.md
+!docs/tailscale-tsnet-version-bisect.md
 *.apk
 *.ap_
 *.aab
@@ -26,3 +28,5 @@ local.properties
 keystores/
 *.idsig
 native/out/
+native/fdroid-out/
+.fdroid-native/

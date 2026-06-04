@@ -31,12 +31,16 @@ class NativeBinaryManager(private val context: Context) {
         val ssh = executablePath("ssh", "libssh_exec.so", binDir)
         val sshKeygen = executablePath("ssh-keygen", "libssh_keygen_exec.so", binDir)
         val sshKeyscan = executablePath("ssh-keyscan", "libssh_keyscan_exec.so", binDir)
+        val scp = executablePath("scp", "libscp_exec.so", binDir)
+        val sftp = executablePath("sftp", "libsftp_exec.so", binDir)
         val tsnet = executablePath("tsnet-nc", "libtsnet_nc_exec.so", binDir)
         val missing = buildList {
             if (rsync == null) add("rsync")
             if (ssh == null) add("ssh")
             if (sshKeygen == null) add("ssh-keygen")
             if (sshKeyscan == null) add("ssh-keyscan")
+            if (scp == null) add("scp")
+            if (sftp == null) add("sftp")
             if (tsnet == null) add("tsnet-nc")
         }
 
@@ -51,6 +55,8 @@ class NativeBinaryManager(private val context: Context) {
                 "ssh" to ssh,
                 "ssh-keygen" to sshKeygen,
                 "ssh-keyscan" to sshKeyscan,
+                "scp" to scp,
+                "sftp" to sftp,
                 "tsnet-nc" to tsnet,
             ).mapNotNull { (name, path) -> path?.let { name to it } }.toMap(),
             missing = missing,
@@ -79,7 +85,6 @@ class NativeBinaryManager(private val context: Context) {
         val nativeExecutable = nativeExecutableCandidates(nativeLibraryName)
             .firstOrNull { it.exists() }
         if (nativeExecutable != null) {
-            nativeExecutable.setExecutable(true, true)
             return nativeExecutable.absolutePath
         }
         val assetCopy = File(binDir, name)
@@ -104,8 +109,11 @@ class NativeBinaryManager(private val context: Context) {
         listOf(
             File(binDir, "rsync"),
             File(binDir, "ssh"),
+            File(binDir, "scp"),
+            File(binDir, "sftp"),
             File(binDir, "tsnet-nc"),
             File(binDir, "lib/libcrypto.so.3"),
+            File(binDir, "lib/libz.so.1"),
             File(binDir, "lib/libzstd.so.1"),
         ).all { it.exists() }
 

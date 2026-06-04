@@ -17,10 +17,11 @@ $docker_cmd run --rm \
   -e ANDROID_SDK_ROOT="$android_home" \
   -e HOME=/workspace \
   -e GRADLE_USER_HOME=/workspace/.gradle-cache \
+  -e RSYNC_BACKUP_ANDROID_IMAGE="$image" \
   -v "$project_dir":/workspace \
   -w /workspace \
   "$image" \
-  bash -lc './scripts/fdroid-scan-source.sh --gradle && ./gradlew --no-daemon testDebugUnitTest lintVitalFdroidRelease'
+  bash -lc './scripts/ensure-debug-keystore.sh && ./scripts/fdroid-scan-source.sh --gradle && ./gradlew --no-daemon assembleFdroidDebug && find app/build/outputs/apk/fdroidDebug -type f -name "*.apk" -print0 | sort -z | xargs -0 sha256sum > app/build/outputs/apk/fdroidDebug/SHA256SUMS.txt'
 
 uid="$(id -u)"
 gid="$(id -g)"
@@ -28,4 +29,4 @@ $docker_cmd run --rm --user root \
   -v "$project_dir":/workspace \
   -w /workspace \
   ubuntu:24.04 \
-  sh -c "chown -R $uid:$gid app/build .gradle .gradle-cache native/fdroid-out .fdroid-native 2>/dev/null || true"
+  sh -c "chown -R $uid:$gid app/build .android .gradle .gradle-cache native/fdroid-out .fdroid-native 2>/dev/null || true"

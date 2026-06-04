@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image="${GO_ANDROID_IMAGE:-golang:1.25-bookworm}"
+image="${GO_ANDROID_IMAGE:-golang:1.26-bookworm}"
 docker_cmd="${DOCKER:-docker}"
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out_dir="$project_dir/native/out/arm64-v8a"

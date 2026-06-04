@@ -21,6 +21,8 @@ done
 
 mkdir -p "$gradle_cache"
 
+"$project_dir/scripts/docker-fdroid-build-native.sh" --from-source
+
 $docker_cmd run --rm \
   --user root \
   -e ANDROID_HOME="$android_home" \
@@ -40,4 +42,4 @@ $docker_cmd run --rm --user root \
   -v "$project_dir":/workspace \
   -w /workspace \
   ubuntu:24.04 \
-  sh -c "chown -R $uid:$gid app/build .gradle .gradle-cache 2>/dev/null || true"
+  sh -c "chown -R $uid:$gid app/build .gradle .gradle-cache native/fdroid-out .fdroid-native 2>/dev/null || true"

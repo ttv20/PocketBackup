@@ -11,11 +11,11 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/netmon"
 	"tailscale.com/tsnet"
 
@@ -66,9 +66,6 @@ func main() {
 		os.Exit(2)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-
 	server := &tsnet.Server{
 		Dir:      *stateDir,
 		Hostname: *hostname,
@@ -77,6 +74,8 @@ func main() {
 	defer server.Close()
 
 	if *upOnly {
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
 		if flag.NArg() != 0 {
 			fmt.Fprintln(os.Stderr, "usage: tsnet-nc --state DIR --hostname NAME --up")
 			os.Exit(2)
@@ -97,22 +96,37 @@ func main() {
 
 	host := flag.Arg(0)
 	port := flag.Arg(1)
-	if _, err := server.Up(ctx); err != nil {
+	upCtx, upCancel := context.WithTimeout(context.Background(), *timeout)
+	status, err := server.Up(upCtx)
+	if err != nil {
+		upCancel()
 		fmt.Fprintf(os.Stderr, "tsnet up failed: %v\n", err)
 		os.Exit(1)
 	}
+	upCancel()
+	printStatusDiagnostics(status, host)
+	if message := missingTargetPeerMessage(status, host); message != "" {
+		fmt.Fprintln(os.Stderr, message)
+		os.Exit(1)
+	}
+	dialHost := resolveTargetHost(status, host)
+	if dialHost != host {
+		fmt.Fprintf(os.Stderr, "tsnet resolved target %q to %q\n", host, dialHost)
+	}
 
 	if *listenAddr != "" {
-		if err := listenAndForward(server, *listenAddr, host, port, *timeout); err != nil {
+		if err := listenAndForward(server, *listenAddr, dialHost, port, *timeout); err != nil {
 			fmt.Fprintf(os.Stderr, "tsnet listen failed: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	conn, err := server.Dial(ctx, "tcp", net.JoinHostPort(host, port))
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), *timeout)
+	defer dialCancel()
+	conn, err := server.Dial(dialCtx, "tcp", net.JoinHostPort(dialHost, port))
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if errors.Is(dialCtx.Err(), context.DeadlineExceeded) {
 			fmt.Fprintln(os.Stderr, "tsnet connect timed out")
 		} else {
 			fmt.Fprintf(os.Stderr, "tsnet connect failed: %v\n", err)
@@ -337,6 +351,175 @@ func joinedIPs(ips []netip.Addr) string {
 	return strings.Join(values, ",")
 }
 
+func printStatusDiagnostics(status *ipnstate.Status, targetHost string) {
+	if status == nil {
+		fmt.Fprintln(os.Stderr, "tsnet status unavailable")
+		return
+	}
+	tailnetName := ""
+	magicDNS := ""
+	magicDNSEnabled := false
+	if status.CurrentTailnet != nil {
+		tailnetName = status.CurrentTailnet.Name
+		magicDNS = status.CurrentTailnet.MagicDNSSuffix
+		magicDNSEnabled = status.CurrentTailnet.MagicDNSEnabled
+	}
+	onlinePeers := 0
+	for _, peer := range status.Peer {
+		if peer.Online {
+			onlinePeers++
+		}
+	}
+	fmt.Fprintf(
+		os.Stderr,
+		"tsnet status state=%s selfIPs=%s peers=%d onlinePeers=%d tailnet=%q magicDNS=%q magicDNSEnabled=%t health=%s\n",
+		status.BackendState,
+		joinedIPs(status.TailscaleIPs),
+		len(status.Peer),
+		onlinePeers,
+		tailnetName,
+		magicDNS,
+		magicDNSEnabled,
+		strings.Join(status.Health, ";"),
+	)
+	if peer := findPeer(status, targetHost); peer != nil {
+		fmt.Fprintf(os.Stderr, "tsnet target peer %s\n", peerSummary(peer))
+	} else {
+		fmt.Fprintf(os.Stderr, "tsnet target peer not found for %q\n", targetHost)
+		fmt.Fprintf(os.Stderr, "tsnet available peers %s\n", peerList(status))
+	}
+}
+
+func findPeer(status *ipnstate.Status, targetHost string) *ipnstate.PeerStatus {
+	normalizedTarget := normalizeHost(targetHost)
+	targetIP, targetIPErr := netip.ParseAddr(strings.Trim(targetHost, "[]"))
+	hasTargetIP := targetIPErr == nil
+	for _, peer := range status.Peer {
+		for _, ip := range peer.TailscaleIPs {
+			if hasTargetIP && ip == targetIP {
+				return peer
+			}
+		}
+		for _, name := range peerNames(peer) {
+			if normalizeHost(name) == normalizedTarget {
+				return peer
+			}
+		}
+	}
+	return nil
+}
+
+func resolveTargetHost(status *ipnstate.Status, targetHost string) string {
+	peer := findPeer(status, targetHost)
+	if peer == nil {
+		return targetHost
+	}
+	for _, ip := range peer.TailscaleIPs {
+		if ip.Is4() {
+			return ip.String()
+		}
+	}
+	if len(peer.TailscaleIPs) > 0 {
+		return peer.TailscaleIPs[0].String()
+	}
+	return targetHost
+}
+
+func peerNames(peer *ipnstate.PeerStatus) []string {
+	names := []string{peer.HostName, peer.DNSName, strings.TrimSuffix(peer.DNSName, ".")}
+	dnsName := strings.TrimSuffix(peer.DNSName, ".")
+	if firstLabel, _, ok := strings.Cut(dnsName, "."); ok {
+		names = append(names, firstLabel)
+	}
+	return names
+}
+
+func missingTargetPeerMessage(status *ipnstate.Status, targetHost string) string {
+	if status == nil || findPeer(status, targetHost) != nil {
+		return ""
+	}
+	normalizedTarget := normalizeHost(targetHost)
+	targetIP, err := netip.ParseAddr(strings.Trim(targetHost, "[]"))
+	if err == nil && isTailscaleNodeIP(targetIP) {
+		return fmt.Sprintf(
+			"tsnet target %q is not visible in this node's tailnet peer map; check that this app node is in the same tailnet and that Tailscale ACLs/auth-key tags permit access",
+			targetHost,
+		)
+	}
+	if status.CurrentTailnet != nil {
+		suffix := normalizeHost(status.CurrentTailnet.MagicDNSSuffix)
+		if suffix != "" && isShortHostName(normalizedTarget) {
+			return fmt.Sprintf(
+				"tsnet MagicDNS target %q is not visible in this node's tailnet peer map; check that this app node is in the same tailnet and that Tailscale ACLs/auth-key tags permit access",
+				targetHost,
+			)
+		}
+		if suffix != "" && (normalizedTarget == suffix || strings.HasSuffix(normalizedTarget, "."+suffix)) {
+			return fmt.Sprintf(
+				"tsnet MagicDNS target %q is not visible in this node's tailnet peer map; check that this app node is in the same tailnet and that Tailscale ACLs/auth-key tags permit access",
+				targetHost,
+			)
+		}
+	}
+	return ""
+}
+
+func isShortHostName(host string) bool {
+	return host != "" && !strings.Contains(host, ".") && !strings.Contains(host, ":")
+}
+
+func isTailscaleNodeIP(ip netip.Addr) bool {
+	for _, prefix := range []string{"100.64.0.0/10", "fd7a:115c:a1e0::/48"} {
+		parsed, err := netip.ParsePrefix(prefix)
+		if err == nil && parsed.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func peerSummary(peer *ipnstate.PeerStatus) string {
+	return fmt.Sprintf(
+		"host=%q dns=%q ips=%s online=%t active=%t expired=%t inNetMap=%t inMagicSock=%t inEngine=%t relay=%q curAddr=%q lastSeen=%s lastHandshake=%s os=%q",
+		peer.HostName,
+		peer.DNSName,
+		joinedIPs(peer.TailscaleIPs),
+		peer.Online,
+		peer.Active,
+		peer.Expired,
+		peer.InNetworkMap,
+		peer.InMagicSock,
+		peer.InEngine,
+		peer.Relay,
+		peer.CurAddr,
+		formatTime(peer.LastSeen),
+		formatTime(peer.LastHandshake),
+		peer.OS,
+	)
+}
+
+func peerList(status *ipnstate.Status) string {
+	if status == nil || len(status.Peer) == 0 {
+		return ""
+	}
+	summaries := make([]string, 0, len(status.Peer))
+	for _, peer := range status.Peer {
+		summaries = append(summaries, fmt.Sprintf("%s/%s/%s", peer.HostName, strings.TrimSuffix(peer.DNSName, "."), joinedIPs(peer.TailscaleIPs)))
+	}
+	return strings.Join(summaries, "; ")
+}
+
+func normalizeHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+}
+
+func formatTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339)
+}
+
 func registerAndroidInterfaceGetter() {
 	if runtime.GOOS != "android" {
 		return
@@ -345,9 +528,6 @@ func registerAndroidInterfaceGetter() {
 }
 
 func androidInterfaces() ([]netmon.Interface, error) {
-	if ifaces := androidInterfacesFromIPCommand(); len(ifaces) > 0 {
-		return ifaces, nil
-	}
 	if ifaces := androidInterfacesFromRouteProbe(); len(ifaces) > 0 {
 		return ifaces, nil
 	}
@@ -361,45 +541,6 @@ func androidInterfaces() ([]netmon.Interface, error) {
 			},
 		},
 	}, nil
-}
-
-func androidInterfacesFromIPCommand() []netmon.Interface {
-	cmd := exec.Command("/system/bin/ip", "-o", "addr", "show", "scope", "global", "up")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-
-	addrsByName := map[string][]net.Addr{}
-	order := []string{}
-	for _, line := range strings.Split(string(output), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 4 {
-			continue
-		}
-		family := fields[2]
-		if family != "inet" && family != "inet6" {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(fields[3])
-		if err != nil || !prefix.Addr().IsValid() || prefix.Addr().IsLoopback() {
-			continue
-		}
-		name := strings.TrimSuffix(fields[1], ":")
-		if name == "" {
-			continue
-		}
-		if _, ok := addrsByName[name]; !ok {
-			order = append(order, name)
-		}
-		addrsByName[name] = append(addrsByName[name], netAddr(prefix))
-	}
-
-	ifaces := make([]netmon.Interface, 0, len(order))
-	for index, name := range order {
-		ifaces = append(ifaces, androidInterface(index+1, name, addrsByName[name]))
-	}
-	return ifaces
 }
 
 func androidInterfacesFromRouteProbe() []netmon.Interface {

@@ -2,6 +2,19 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+docker_cmd="${DOCKER:-docker}"
+
+restore_owner() {
+  local uid gid
+  uid="$(id -u)"
+  gid="$(id -g)"
+  "$docker_cmd" run --rm --user root \
+    -v "$project_dir":/workspace \
+    -w /workspace \
+    ubuntu:24.04 \
+    sh -c "chown -R $uid:$gid native/out native/fdroid-out .fdroid-native 2>/dev/null || true"
+}
+trap restore_owner EXIT
 
 case "${1:-}" in
   ""|"--only")
@@ -12,8 +25,7 @@ case "${1:-}" in
     "$project_dir/scripts/build-tsnet-helper.sh"
     ;;
   "--from-source")
-    printf 'Full rsync/OpenSSH source builds are Phase 3 work and are not implemented yet.\n' >&2
-    exit 2
+    "$project_dir/scripts/build-fdroid-native-termux.sh"
     ;;
   *)
     printf 'usage: %s [--only tsnet-nc|--from-source]\n' "$0" >&2
