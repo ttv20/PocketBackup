@@ -5,10 +5,10 @@ License: MIT
 AuthorName: ttv20
 SourceCode: https://codeberg.org/ttv20/PocketSync
 IssueTracker: https://codeberg.org/ttv20/PocketSync/issues
-Name: PocketSync
+Name: PocketBackup
 Summary: Android backups to your own server with rsync, SSH, and built-in Tailscale client
 Description: |-
-  PocketSync backs up Android shared storage to a user-controlled server with
+  PocketBackup backs up Android shared storage to a user-controlled server with
   rsync over SSH. Tailscale connectivity is optional; LAN-only profiles can be
   configured without Tailscale setup.
 

@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PocketSync"
+rootProject.name = "PocketBackup"
 include(":app")

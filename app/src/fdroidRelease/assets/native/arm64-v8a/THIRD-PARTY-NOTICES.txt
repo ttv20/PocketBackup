@@ -1,6 +1,6 @@
-PocketSync native asset notices
+PocketBackup native asset notices
 
-Original PocketSync source code is MIT. Bundled native tools keep their own
+Original PocketBackup source code is MIT. Bundled native tools keep their own
 upstream licenses.
 
 Native package snapshot:

@@ -191,7 +191,7 @@ if command -v readelf >/dev/null 2>&1; then
 fi
 
 {
-  printf 'Termux package source build for PocketSync F-Droid native assets\n'
+  printf 'Termux package source build for PocketBackup F-Droid native assets\n'
   printf 'termux-packages: %s %s\n' "$termux_repo_url" "$termux_commit"
   printf 'termux-arch: %s\n\n' "$termux_arch"
   for package in "${root_packages[@]}"; do

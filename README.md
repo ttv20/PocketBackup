@@ -1,9 +1,9 @@
-# PocketSync
+# PocketBackup
 
-PocketSync backs up your Android phone to your own server using rsync, SSH, and
+PocketBackup backs up your Android phone to your own server using rsync, SSH, and
 a built-in Tailscale client. No root or Android VPN connection is required.
 
-PocketSync is a standalone personal/sideload Android app. It does not depend on
+PocketBackup is a standalone personal/sideload Android app. It does not depend on
 Termux and it does not send backups to a vendor cloud. The first release is
 backup-only.
 
@@ -68,7 +68,7 @@ F-Droid readiness work is tracked in
 
 ## License
 
-Original PocketSync code and documentation are released under the `MIT`
+Original PocketBackup code and documentation are released under the `MIT`
 License. Bundled third-party components keep their own licenses; see
 [LICENSE.md](LICENSE.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 

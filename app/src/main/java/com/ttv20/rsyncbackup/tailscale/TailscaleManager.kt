@@ -170,7 +170,7 @@ class TailscaleManager(
     }
 
     companion object {
-        private const val TAG = "PocketSyncTailscale"
+        private const val TAG = "PocketBackupTailscale"
         private const val MAX_LOG_OUTPUT = 4000
         const val STATE_SECRET_ALIAS = "tailscale-state"
 

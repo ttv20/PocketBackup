@@ -92,7 +92,7 @@ adb install -r app/build/outputs/apk/fdroidDebug/app-fdroidDebug.apk
 Then run the app's Tailscale route test and inspect:
 
 ```bash
-adb logcat -d -v time | rg 'PocketSyncTailscale|tsnet status|tsnet target|available peers'
+adb logcat -d -v time | rg 'PocketBackupTailscale|tsnet status|tsnet target|available peers'
 ```
 
 A version is good if `tsnet status` reports nonzero peers. It is bad if it

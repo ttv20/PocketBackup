@@ -99,6 +99,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -108,6 +109,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.ttv20.rsyncbackup.R
 import com.ttv20.rsyncbackup.backup.BackupService
 import com.ttv20.rsyncbackup.backup.BinaryPaths
 import com.ttv20.rsyncbackup.backup.AndroidConstraintSnapshotReader
@@ -1308,7 +1310,7 @@ private fun AppScaffold(
                     }
                 },
                 title = {
-                    Text("PocketSync")
+                    Text(stringResource(R.string.app_name))
                 },
                 actions = {
                     if (onboardingContent == null && screen != Screen.Settings) {
