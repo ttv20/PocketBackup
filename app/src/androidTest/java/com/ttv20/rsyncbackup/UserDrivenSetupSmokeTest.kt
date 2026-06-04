@@ -143,15 +143,11 @@ class UserDrivenSetupSmokeTest {
     }
 
     private fun openFirstProfileEditor() {
-        composeRule.onAllNodesWithText(app.repository.state.value.profiles.first().name)[0].performClick()
-        composeRule.waitForIdle()
         composeRule.onAllNodesWithText("Edit")[0].performClick()
         composeRule.waitForIdle()
     }
 
     private fun openFirstServerEditor() {
-        composeRule.onAllNodesWithText(app.repository.state.value.servers.first().name)[0].performClick()
-        composeRule.waitForIdle()
         composeRule.onAllNodesWithText("Edit")[0].performClick()
         composeRule.waitForIdle()
     }

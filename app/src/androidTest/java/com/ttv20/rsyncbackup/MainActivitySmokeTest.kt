@@ -28,12 +28,12 @@ class MainActivitySmokeTest {
         openScreen("Profiles")
         assertAnyTextDisplayed("Profiles")
         openFirstProfileEditor()
-        composeRule.onNodeWithText("Profile editor").assertIsDisplayed()
+        composeRule.onNodeWithText("Profile Edit").assertIsDisplayed()
 
         openScreen("Servers")
         assertAnyTextDisplayed("Servers")
         openFirstServerEditor()
-        composeRule.onNodeWithText("Server setup/test").assertIsDisplayed()
+        composeRule.onNodeWithText("Server Edit").assertIsDisplayed()
 
         openScreen("SSH keys")
         composeRule.onNodeWithText("SSH key management").assertIsDisplayed()
@@ -63,7 +63,7 @@ class MainActivitySmokeTest {
     fun setupScreensExposeEndToEndControls() {
         openScreen("Profiles")
         openFirstProfileEditor()
-        assertVisibleText("profile-editor-scroll", "Profile editor")
+        assertVisibleText("profile-editor-scroll", "Profile Edit")
         assertVisibleText("profile-editor-scroll", "Source path")
         assertVisibleText("profile-editor-scroll", "Pick")
         assertVisibleText("profile-editor-scroll", "Remote path")
@@ -75,7 +75,7 @@ class MainActivitySmokeTest {
 
         openScreen("Servers")
         openFirstServerEditor()
-        assertVisibleText("server-editor-scroll", "Server setup/test")
+        assertVisibleText("server-editor-scroll", "Server Edit")
         assertVisibleText("server-editor-scroll", "Primary LAN host")
         assertVisibleText("server-editor-scroll", "Fallback Tailscale host")
         assertVisibleText("server-editor-scroll", "Default remote path")
@@ -118,7 +118,7 @@ class MainActivitySmokeTest {
         openScreen("Servers")
         val serverCount = app.repository.state.value.servers.size
         clickTag("servers-add-button")
-        composeRule.onNodeWithText("Server setup/test").assertIsDisplayed()
+        composeRule.onNodeWithText("New Server").assertIsDisplayed()
         clickTag("server-save-button")
         composeRule.waitUntil(5_000) {
             app.repository.state.value.servers.size == serverCount + 1
@@ -128,7 +128,7 @@ class MainActivitySmokeTest {
         openScreen("Profiles")
         val profileCount = app.repository.state.value.profiles.size
         clickTag("profiles-add-button")
-        composeRule.onNodeWithText("Profile editor").assertIsDisplayed()
+        composeRule.onNodeWithText("New Profile").assertIsDisplayed()
         clickTag("profile-save-button")
         composeRule.waitUntil(5_000) {
             app.repository.state.value.profiles.size == profileCount + 1
@@ -206,26 +206,12 @@ class MainActivitySmokeTest {
         composeRule.waitForIdle()
     }
 
-    private fun openFirstProfile() {
-        val app = composeRule.activity.application as RsyncBackupApplication
-        composeRule.onAllNodesWithText(app.repository.state.value.profiles.first().name)[0].performClick()
-        composeRule.waitForIdle()
-    }
-
     private fun openFirstProfileEditor() {
-        openFirstProfile()
         composeRule.onAllNodesWithText("Edit")[0].performClick()
         composeRule.waitForIdle()
     }
 
-    private fun openFirstServer() {
-        val app = composeRule.activity.application as RsyncBackupApplication
-        composeRule.onAllNodesWithText(app.repository.state.value.servers.first().name)[0].performClick()
-        composeRule.waitForIdle()
-    }
-
     private fun openFirstServerEditor() {
-        openFirstServer()
         composeRule.onAllNodesWithText("Edit")[0].performClick()
         composeRule.waitForIdle()
     }
