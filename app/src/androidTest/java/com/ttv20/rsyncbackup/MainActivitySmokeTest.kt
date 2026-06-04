@@ -10,6 +10,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -19,8 +21,17 @@ class MainActivitySmokeTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun opensPermissionSetupWhenRequiredPermissionIsMissing() {
-        composeRule.onNodeWithText("Permission setup/status").assertIsDisplayed()
+    fun freshInstallOpensWelcomeAndSkipOpensDashboard() {
+        val app = composeRule.activity.application as RsyncBackupApplication
+
+        composeRule.onNodeWithText("Welcome").assertIsDisplayed()
+        composeRule.onNodeWithTag("onboarding-skip-button").performClick()
+        composeRule.waitUntil(5_000) {
+            app.repository.state.value.settings.onboardingSkippedAt != null
+        }
+
+        assertNotNull(app.repository.state.value.settings.onboardingSkippedAt)
+        composeRule.onNodeWithTag("dashboard").assertIsDisplayed()
     }
 
     @Test
@@ -30,22 +41,63 @@ class MainActivitySmokeTest {
         openFirstProfileEditor()
         composeRule.onNodeWithText("Profile Edit").assertIsDisplayed()
 
-        openScreen("Servers")
-        assertAnyTextDisplayed("Servers")
-        openFirstServerEditor()
-        composeRule.onNodeWithText("Server Edit").assertIsDisplayed()
+        openScreen("Targets")
+        assertAnyTextDisplayed("Targets")
+        openFirstTargetEditor()
+        composeRule.onNodeWithText("Target Edit").assertIsDisplayed()
 
-        openScreen("SSH keys")
-        composeRule.onNodeWithText("SSH key management").assertIsDisplayed()
+        openScreen("SSH Access")
+        composeRule.onNodeWithText("SSH Access").assertIsDisplayed()
 
         openScreen("Tailscale")
-        composeRule.onNodeWithText("Tailscale setup/status/test/reset").assertIsDisplayed()
+        composeRule.onNodeWithText("Tailscale Connection").assertIsDisplayed()
 
         openScreen("Logs")
         composeRule.onNodeWithText("Last 20").assertIsDisplayed()
 
         openScreen("Settings")
         composeRule.onNodeWithText("Settings and import/export").assertIsDisplayed()
+    }
+
+    @Test
+    fun setupGuideExposesKeyOnboardingSteps() {
+        val app = composeRule.activity.application as RsyncBackupApplication
+        val initialTargetCount = app.repository.state.value.targets.size
+        val initialProfileCount = app.repository.state.value.profiles.size
+
+        openScreen("Settings")
+        clickTag("settings-run-setup-guide")
+        composeRule.onNodeWithText("Welcome").assertIsDisplayed()
+        clickTag("onboarding-start-button")
+
+        composeRule.onNodeWithText("Permissions").assertIsDisplayed()
+        clickTag("onboarding-permissions-continue-button")
+
+        composeRule.onNodeWithText("SSH Access").assertIsDisplayed()
+        clickTag("ssh-generate-key-button")
+        composeRule.waitUntil(10_000) {
+            app.repository.state.value.sshKeySettings.publicKey?.startsWith("ssh-ed25519 ") == true
+        }
+        clickTag("ssh-public-key-copy-button")
+        clickTag("onboarding-continue-button")
+
+        composeRule.onNodeWithText("Tailscale Connection").assertIsDisplayed()
+        clickTag("onboarding-continue-button")
+
+        composeRule.onNodeWithText("New Target").assertIsDisplayed()
+        assertVisibleText("onboarding-newtarget", "Scan LAN")
+        assertVisibleText("onboarding-newtarget", "Install public key")
+        clickTag("onboarding-save-target-button")
+        assertEquals(initialTargetCount, app.repository.state.value.targets.size)
+
+        composeRule.onNodeWithText("New Profile").assertIsDisplayed()
+        assertVisibleText("onboarding-newprofile", "Selected target")
+        clickTag("onboarding-save-profile-button")
+        assertEquals(initialProfileCount, app.repository.state.value.profiles.size)
+
+        composeRule.onNodeWithText("Review And Dry Run").assertIsDisplayed()
+        clickTag("onboarding-dry-run-button")
+        composeRule.onNodeWithText("Dry run result").assertIsDisplayed()
     }
 
     @Test
@@ -67,39 +119,43 @@ class MainActivitySmokeTest {
         assertVisibleText("profile-editor-scroll", "Source path")
         assertVisibleText("profile-editor-scroll", "Pick")
         assertVisibleText("profile-editor-scroll", "Remote path")
-        assertVisibleText("profile-editor-scroll", "Add server")
+        assertVisibleText("profile-editor-scroll", "Add target")
         composeRule.onAllNodesWithText("Remote safety").assertCountEquals(0)
         assertVisibleText("profile-editor-scroll", "Delete remote files not present locally")
         assertVisibleText("profile-editor-scroll", "Advanced rsync args")
         assertVisibleText("profile-editor-scroll", "Command preview")
 
-        openScreen("Servers")
-        openFirstServerEditor()
-        assertVisibleText("server-editor-scroll", "Server Edit")
-        assertVisibleText("server-editor-scroll", "Primary LAN host")
-        assertVisibleText("server-editor-scroll", "Fallback Tailscale host")
-        assertVisibleText("server-editor-scroll", "Default remote path")
-        assertVisibleText("server-editor-scroll", "Trusted fingerprint")
-        assertVisibleText("server-editor-scroll", "Scan LAN")
-        assertVisibleText("server-editor-scroll", "One-time password setup")
-        assertVisibleText("server-editor-scroll", "Install over LAN")
+        openScreen("Targets")
+        openFirstTargetEditor()
+        assertVisibleText("target-editor-scroll", "Target Edit")
+        assertVisibleText("target-editor-scroll", "Target readiness")
+        assertVisibleText("target-editor-scroll", "Primary LAN host")
+        assertVisibleText("target-editor-scroll", "Fallback Tailscale host")
+        assertVisibleText("target-editor-scroll", "Default remote path")
+        assertVisibleText("target-editor-scroll", "Trusted fingerprint")
+        assertVisibleText("target-editor-scroll", "Scan LAN")
+        assertVisibleText("target-editor-scroll", "One-time password setup")
+        assertVisibleText("target-editor-scroll", "Install over LAN")
 
-        openScreen("SSH keys")
-        assertVisibleText("ssh-keys-scroll", "SSH key management")
-        assertVisibleText("ssh-keys-scroll", "Generated key")
-        assertVisibleText("ssh-keys-scroll", "Generate")
-        assertVisibleText("ssh-keys-scroll", "Custom private key")
+        openScreen("SSH Access")
+        assertVisibleText("ssh-keys-scroll", "SSH Access")
+        assertVisibleText("ssh-keys-scroll", "No SSH key yet")
+        assertVisibleText("ssh-keys-scroll", "Generate app key")
+        assertVisibleText("ssh-keys-scroll", "Use existing key")
         assertVisibleText("ssh-keys-scroll", "Private key")
         assertVisibleText("ssh-keys-scroll", "Passphrase")
-        assertVisibleText("ssh-keys-scroll", "Store")
+        assertVisibleText("ssh-keys-scroll", "Store existing key")
+        assertVisibleText("ssh-keys-scroll", "Key details")
 
         openScreen("Tailscale")
-        assertVisibleText("tailscale-scroll", "Tailscale setup/status/test/reset")
+        assertVisibleText("tailscale-scroll", "Tailscale Connection")
+        assertVisibleText("tailscale-scroll", "Not connected")
         assertVisibleText("tailscale-scroll", "Node name")
         assertVisibleText("tailscale-scroll", "Auth key")
-        assertVisibleText("tailscale-scroll", "Authenticate")
-        assertVisibleText("tailscale-scroll", "Reset")
-        assertVisibleText("tailscale-scroll", "Test host")
+        assertVisibleText("tailscale-scroll", "Connect Tailscale")
+        assertVisibleText("tailscale-scroll", "Reset Tailscale")
+        assertVisibleText("tailscale-scroll", "Target Tailscale host")
+        assertVisibleText("tailscale-scroll", "Test route")
         assertVisibleText("tailscale-scroll", "Key expiry advice acknowledged")
 
         openScreen("Settings")
@@ -112,18 +168,18 @@ class MainActivitySmokeTest {
     }
 
     @Test
-    fun addButtonsRevealCreatedProfileAndServer() {
+    fun addButtonsRevealCreatedProfileAndTarget() {
         val app = composeRule.activity.application as RsyncBackupApplication
 
-        openScreen("Servers")
-        val serverCount = app.repository.state.value.servers.size
-        clickTag("servers-add-button")
-        composeRule.onNodeWithText("New Server").assertIsDisplayed()
-        clickTag("server-save-button")
+        openScreen("Targets")
+        val targetCount = app.repository.state.value.targets.size
+        clickTag("targets-add-button")
+        composeRule.onNodeWithText("New Target").assertIsDisplayed()
+        clickTag("target-save-button")
         composeRule.waitUntil(5_000) {
-            app.repository.state.value.servers.size == serverCount + 1
+            app.repository.state.value.targets.size == targetCount + 1
         }
-        assertAnyTextDisplayed(app.repository.state.value.servers.last().name)
+        assertAnyTextDisplayed(app.repository.state.value.targets.last().name)
 
         openScreen("Profiles")
         val profileCount = app.repository.state.value.profiles.size
@@ -137,20 +193,20 @@ class MainActivitySmokeTest {
     }
 
     @Test
-    fun profileEditorCanCreateServerInline() {
+    fun profileEditorCanCreateTargetInline() {
         val app = composeRule.activity.application as RsyncBackupApplication
 
         openScreen("Profiles")
         openFirstProfileEditor()
-        val serverCount = app.repository.state.value.servers.size
-        clickTag("profile-add-server-button")
+        val targetCount = app.repository.state.value.targets.size
+        clickTag("profile-add-target-button")
         composeRule.waitUntil(5_000) {
-            app.repository.state.value.servers.size == serverCount + 1
+            app.repository.state.value.targets.size == targetCount + 1
         }
 
-        val createdServer = app.repository.state.value.servers.last()
-        assertAnyTextDisplayed(createdServer.name)
-        assertTrue(app.repository.state.value.servers.any { it.id == createdServer.id })
+        val createdTarget = app.repository.state.value.targets.last()
+        assertAnyTextDisplayed(createdTarget.name)
+        assertTrue(app.repository.state.value.targets.any { it.id == createdTarget.id })
     }
 
     private fun assertVisibleText(scrollContainerTag: String, text: String) {
@@ -211,7 +267,7 @@ class MainActivitySmokeTest {
         composeRule.waitForIdle()
     }
 
-    private fun openFirstServerEditor() {
+    private fun openFirstTargetEditor() {
         composeRule.onAllNodesWithText("Edit")[0].performClick()
         composeRule.waitForIdle()
     }

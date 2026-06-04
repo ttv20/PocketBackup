@@ -2,7 +2,7 @@ package com.ttv20.rsyncbackup.backup
 
 import com.ttv20.rsyncbackup.model.BackupProfile
 import com.ttv20.rsyncbackup.model.Route
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 import com.ttv20.rsyncbackup.model.TargetMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -10,8 +10,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RsyncCommandBuilderTest {
-    private val server = ServerRecord(
-        id = "server",
+    private val target = TargetRecord(
+        id = "target",
         name = "Home",
         user = "ttv20",
         lanHost = "192.168.3.200",
@@ -45,7 +45,7 @@ class RsyncCommandBuilderTest {
     fun tailscaleRouteUsesForwardedEndpointAndHostKeyAlias() {
         val command = RsyncCommandBuilder.build(
             profile = profile(targetMode = TargetMode.TAILSCALE_ONLY),
-            server = server,
+            target = target,
             route = Route.TAILSCALE,
             binaryPaths = binaries,
             sshKeyPath = "/files/id_ed25519",
@@ -85,7 +85,7 @@ class RsyncCommandBuilderTest {
     fun askpassKeysAllowPassphrasePromptButDisablePasswordAuth() {
         val command = RsyncCommandBuilder.build(
             profile = profile(),
-            server = server,
+            target = target,
             route = Route.LAN,
             binaryPaths = binaries,
             sshKeyPath = "/files/id_ed25519",
@@ -121,7 +121,7 @@ class RsyncCommandBuilderTest {
     @Test
     fun buildSshCommandTargetsSelectedRoute() {
         val command = RsyncCommandBuilder.buildSshCommand(
-            server = server,
+            target = target,
             route = Route.LAN,
             binaryPaths = binaries,
             sshKeyPath = "/files/id_ed25519",
@@ -137,7 +137,7 @@ class RsyncCommandBuilderTest {
     private fun command(profile: BackupProfile, route: Route): RsyncCommand =
         RsyncCommandBuilder.build(
             profile = profile,
-            server = server,
+            target = target,
             route = route,
             binaryPaths = binaries,
             sshKeyPath = "/files/id_ed25519",
@@ -154,7 +154,7 @@ class RsyncCommandBuilderTest {
     ) = BackupProfile(
         id = "profile",
         name = "Phone",
-        serverId = "server",
+        targetId = "target",
         remotePath = "/mnt/backup/phone",
         targetMode = targetMode,
         deleteEnabled = deleteEnabled,

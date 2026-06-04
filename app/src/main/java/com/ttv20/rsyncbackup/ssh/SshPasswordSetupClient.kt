@@ -3,7 +3,7 @@ package com.ttv20.rsyncbackup.ssh
 import com.ttv20.rsyncbackup.backup.NativeBinaryManager
 import com.ttv20.rsyncbackup.backup.RsyncCommandBuilder
 import com.ttv20.rsyncbackup.backup.SshRuntimeFiles
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 import com.ttv20.rsyncbackup.model.TrustedHostFingerprint
 import net.schmizz.sshj.SSHClient
 import java.io.Closeable
@@ -20,19 +20,19 @@ data class SshPasswordSetupResult(
 
 class SshPasswordSetupClient {
     fun installPublicKey(
-        server: ServerRecord,
+        target: TargetRecord,
         trustedHostFingerprints: List<TrustedHostFingerprint>,
         publicKey: String,
         password: String,
         workDir: File,
-        hostname: String = server.lanHost,
+        hostname: String = target.lanHost,
         socketFactory: SocketFactory? = null,
     ): SshPasswordSetupResult {
         require(publicKey.isNotBlank()) { "No SSH public key is configured" }
         require(password.isNotBlank()) { "Password is required for one-time setup" }
 
-        val knownHostsText = SshRuntimeFiles.knownHostsText(server, trustedHostFingerprints)
-        require(knownHostsText.isNotBlank()) { "Scan and trust the server host key before password setup" }
+        val knownHostsText = SshRuntimeFiles.knownHostsText(target, trustedHostFingerprints)
+        require(knownHostsText.isNotBlank()) { "Scan and trust the target host key before password setup" }
 
         val knownHostsFile = File(workDir, "setup-known-hosts-${System.nanoTime()}").also {
             it.parentFile?.mkdirs()
@@ -43,8 +43,8 @@ class SshPasswordSetupClient {
             SSHClient().use { ssh ->
                 socketFactory?.let { ssh.setSocketFactory(it) }
                 ssh.loadKnownHosts(knownHostsFile)
-                ssh.connect(hostname, server.port)
-                ssh.authPassword(server.user, password)
+                ssh.connect(hostname, target.port)
+                ssh.authPassword(target.user, password)
                 ssh.startSession().use { session ->
                     val command = session.exec(authorizedKeysInstallScript(publicKey))
                     val stdout = command.inputStream.bufferedReader().readText()
@@ -63,7 +63,7 @@ class SshPasswordSetupClient {
     }
 
     fun installPublicKeyWithNativeSsh(
-        server: ServerRecord,
+        target: TargetRecord,
         trustedHostFingerprints: List<TrustedHostFingerprint>,
         publicKey: String,
         password: String,
@@ -77,8 +77,8 @@ class SshPasswordSetupClient {
         require(publicKey.isNotBlank()) { "No SSH public key is configured" }
         require(password.isNotBlank()) { "Password is required for one-time setup" }
 
-        val knownHostsText = SshRuntimeFiles.knownHostsText(server, trustedHostFingerprints)
-        require(knownHostsText.isNotBlank()) { "Scan and trust the server host key before password setup" }
+        val knownHostsText = SshRuntimeFiles.knownHostsText(target, trustedHostFingerprints)
+        require(knownHostsText.isNotBlank()) { "Scan and trust the target host key before password setup" }
 
         val suffix = System.nanoTime().toString()
         val knownHostsFile = File(workDir, "setup-known-hosts-$suffix").also {
@@ -107,7 +107,7 @@ class SshPasswordSetupClient {
                     "60s",
                     "--ssh-install-authorized-key",
                     "--user",
-                    server.user,
+                    target.user,
                     "--password-file",
                     passwordFile.absolutePath,
                     "--public-key-file",
@@ -115,7 +115,7 @@ class SshPasswordSetupClient {
                     "--known-hosts",
                     knownHostsFile.absolutePath,
                     hostname,
-                    server.port.toString(),
+                    target.port.toString(),
                 ),
                 filesDir = filesDir,
             )

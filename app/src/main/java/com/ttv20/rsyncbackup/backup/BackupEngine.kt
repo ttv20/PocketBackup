@@ -33,7 +33,7 @@ class BackupEngine(
     ): BackupLog = withContext(Dispatchers.IO) {
         val state = repository.state.value
         val profile = state.profiles.first { it.id == profileId }
-        val server = state.servers.first { it.id == profile.serverId }
+        val target = state.targets.first { it.id == profile.targetId }
         val startedAt = Instant.now().toString()
         val recentOutput = mutableListOf<String>()
         processController.reset()
@@ -110,9 +110,9 @@ class BackupEngine(
             val passphraseBytes = state.sshKeySettings.passphraseSecretAlias?.let { alias ->
                 secretStore.get(alias) ?: return@withContext failedLog("SSH private key passphrase is missing")
             }
-            val knownHostsText = SshRuntimeFiles.knownHostsText(server, state.trustedHostFingerprints)
+            val knownHostsText = SshRuntimeFiles.knownHostsText(target, state.trustedHostFingerprints)
             if (knownHostsText.isBlank()) {
-                return@withContext failedLog("No trusted SSH host key is configured for ${server.name}")
+                return@withContext failedLog("No trusted SSH host key is configured for ${target.name}")
             }
             val commandInputs = writeCommandInputs(profile, privateKeyBytes, passphraseBytes, knownHostsText)
             val output = StringBuilder()
@@ -195,7 +195,7 @@ class BackupEngine(
             }
 
             fun routeConnection(route: Route, forward: TailscaleTcpForward? = null) = SshConnection(
-                    server = server,
+                    target = target,
                     route = route,
                     binaryPaths = nativeInstall.paths,
                     sshKeyPath = commandInputs.sshKeyPath,
@@ -211,7 +211,7 @@ class BackupEngine(
             var selectedRoute: Route? = null
             var lastRouteFailure: String? = null
             for (candidate in profile.targetMode.routeOrder()) {
-                val hostResult = runCatching { RsyncCommandBuilder.targetHost(server, candidate) }
+                val hostResult = runCatching { RsyncCommandBuilder.targetHost(target, candidate) }
                 if (hostResult.isFailure) {
                     val message = "Route $candidate is not configured: ${hostResult.exceptionOrNull()?.message}"
                     lastRouteFailure = message
@@ -229,7 +229,7 @@ class BackupEngine(
                             tailscaleStateDir = File(commandInputs.tailscaleStateDir),
                             tailscaleNodeName = repository.state.value.tailscale.nodeName,
                             targetHost = host,
-                            targetPort = server.port,
+                            targetPort = target.port,
                         )
                         recordLine("Tailscale route to $host forwarded on ${candidateForward.host}:${candidateForward.port}")
                     }
@@ -260,11 +260,11 @@ class BackupEngine(
                 }
             }
             val route = selectedRoute ?: return@withContext failedLog(
-                summary = "No usable route for ${server.name}: ${lastRouteFailure ?: "no routes configured"}",
+                summary = "No usable route for ${target.name}: ${lastRouteFailure ?: "no routes configured"}",
                 raw = output.toString(),
             )
             val connection = routeConnection(route, selectedTailscaleForward)
-            val command = buildRsyncCommand(profile, server, route, nativeInstall.paths, commandInputs, selectedTailscaleForward)
+            val command = buildRsyncCommand(profile, target, route, nativeInstall.paths, commandInputs, selectedTailscaleForward)
 
         updateProgress(RunProgressPhase.PREPARING, "Checking remote target")
         val prepareResult = runCommand(RemoteTargetCommands.prepareTarget(profile, connection), commandInputs.askpassPath) { line ->
@@ -487,7 +487,7 @@ class BackupEngine(
 
     private fun buildRsyncCommand(
         profile: com.ttv20.rsyncbackup.model.BackupProfile,
-        server: com.ttv20.rsyncbackup.model.ServerRecord,
+        target: com.ttv20.rsyncbackup.model.TargetRecord,
         route: Route,
         binaryPaths: BinaryPaths,
         inputs: BackupCommandInputs,
@@ -495,7 +495,7 @@ class BackupEngine(
     ): RsyncCommand {
         return RsyncCommandBuilder.build(
             profile = profile,
-            server = server,
+            target = target,
             route = route,
             binaryPaths = binaryPaths,
             sshKeyPath = inputs.sshKeyPath,

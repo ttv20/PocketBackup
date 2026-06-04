@@ -3,6 +3,9 @@ package com.ttv20.rsyncbackup.storage
 import com.ttv20.rsyncbackup.model.BackupEndReason
 import com.ttv20.rsyncbackup.model.BackupProfile
 import com.ttv20.rsyncbackup.model.BackupRunTrigger
+import com.ttv20.rsyncbackup.model.AppState
+import com.ttv20.rsyncbackup.model.ExportCodec
+import com.ttv20.rsyncbackup.model.InitialData
 import com.ttv20.rsyncbackup.model.RunProgressPhase
 import com.ttv20.rsyncbackup.model.RunProgressState
 import com.ttv20.rsyncbackup.model.RunStatus
@@ -23,7 +26,7 @@ class AppRepositoryQueueTest {
         val second = BackupProfile(
             id = "second",
             name = "Second",
-            serverId = "server-home",
+            targetId = "target-home",
             remotePath = "/mnt/backup/second",
             excludes = "cache/\n",
         )
@@ -117,6 +120,39 @@ class AppRepositoryQueueTest {
 
         assertEquals(RunProgressPhase.IDLE, restored.state.value.runProgress.phase)
         assertNull(restored.state.value.runProgress.profileId)
+    }
+
+    @Test
+    fun loadRemovesAbandonedOnboardingDraftProfileAndTarget() {
+        val dataFile = temporaryFolder.newFile("state.json")
+        val base = InitialData.appState("cache/")
+        val defaultTarget = base.targets.single()
+        val duplicateTarget = defaultTarget.copy(
+            id = "onboarding-target",
+            name = "New target 2",
+            fingerprintGroupId = "onboarding-target",
+        )
+        val duplicateProfile = base.profiles.single().copy(
+            id = "onboarding-profile",
+            name = "Phone backup",
+            targetId = duplicateTarget.id,
+            remotePath = duplicateTarget.defaultRemotePath,
+            remoteSafetyReviewedAt = "2026-06-04T07:00:00Z",
+        )
+        dataFile.writeText(
+            ExportCodec.json.encodeToString(
+                AppState.serializer(),
+                base.copy(
+                    targets = base.targets + duplicateTarget,
+                    profiles = base.profiles + duplicateProfile,
+                ),
+            ),
+        )
+
+        val restored = repository(dataFile)
+
+        assertEquals(listOf(InitialData.DEFAULT_TARGET_ID), restored.state.value.targets.map { it.id })
+        assertEquals(listOf(InitialData.DEFAULT_PROFILE_ID), restored.state.value.profiles.map { it.id })
     }
 
     private fun repository(dataFile: File = temporaryFolder.newFile()): AppRepository {

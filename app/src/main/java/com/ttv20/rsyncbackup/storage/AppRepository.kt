@@ -12,7 +12,7 @@ import com.ttv20.rsyncbackup.model.InitialData
 import com.ttv20.rsyncbackup.model.RunProgressPhase
 import com.ttv20.rsyncbackup.model.RunProgressState
 import com.ttv20.rsyncbackup.model.RunStatus
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 import com.ttv20.rsyncbackup.model.withImportedConfiguration
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +39,9 @@ class AppRepository(
         } else {
             InitialData.appState(defaultExcludes)
         }
-        mutableState.value = recoverInterruptedRunningBackup(loaded).copy(runProgress = RunProgressState())
+        mutableState.value = removeAbandonedOnboardingDuplicates(
+            recoverInterruptedRunningBackup(loaded),
+        ).copy(runProgress = RunProgressState())
         saveBlocking()
     }
 
@@ -76,9 +78,9 @@ class AppRepository(
         }
     }
 
-    fun upsertServer(server: ServerRecord) {
+    fun upsertTarget(target: TargetRecord) {
         update { state ->
-            state.copy(servers = state.servers.filterNot { it.id == server.id } + server)
+            state.copy(targets = state.targets.filterNot { it.id == target.id } + target)
         }
     }
 
@@ -178,6 +180,68 @@ class AppRepository(
             }
         }
     }
+
+    private fun removeAbandonedOnboardingDuplicates(state: AppState): AppState {
+        val defaultProfile = state.profiles.firstOrNull { it.id == InitialData.DEFAULT_PROFILE_ID } ?: return state
+        val defaultTarget = state.targets.firstOrNull { it.id == defaultProfile.targetId } ?: return state
+        val duplicateProfiles = state.profiles.filter { profile ->
+            isAbandonedOnboardingProfile(profile, defaultProfile, defaultTarget, state.targets)
+        }
+        if (duplicateProfiles.isEmpty()) return state
+
+        val duplicateProfileIds = duplicateProfiles.map { it.id }.toSet()
+        val remainingProfiles = state.profiles.filterNot { it.id in duplicateProfileIds }
+        val duplicateTargetIds = duplicateProfiles.map { it.targetId }.toSet()
+        val removableTargetIds = state.targets
+            .filter { target -> target.id in duplicateTargetIds }
+            .filter { target ->
+                remainingProfiles.none { it.targetId == target.id } &&
+                    state.trustedHostFingerprints.none {
+                        it.targetId == target.id || it.targetId == target.fingerprintGroupId
+                    }
+            }
+            .map { it.id }
+            .toSet()
+        val removingRunningProfile = state.queue.runningProfileId in duplicateProfileIds
+
+        return state.copy(
+            targets = state.targets.filterNot { it.id in removableTargetIds },
+            profiles = remainingProfiles,
+            queue = state.queue.copy(
+                runningProfileId = state.queue.runningProfileId.takeUnless { it in duplicateProfileIds },
+                queuedProfileIds = state.queue.queuedProfileIds.filterNot { it in duplicateProfileIds },
+                runningTrigger = state.queue.runningTrigger.takeUnless { removingRunningProfile },
+                queuedTriggers = state.queue.queuedTriggers.filterKeys { it !in duplicateProfileIds },
+            ),
+            runProgress = state.runProgress.takeUnless { it.profileId in duplicateProfileIds }
+                ?: RunProgressState(),
+        )
+    }
+
+    private fun isAbandonedOnboardingProfile(
+        profile: BackupProfile,
+        defaultProfile: BackupProfile,
+        defaultTarget: TargetRecord,
+        targets: List<TargetRecord>,
+    ): Boolean {
+        if (profile.id == defaultProfile.id) return false
+        if (profile.name != "Phone backup") return false
+        if (profile.sourcePath != defaultProfile.sourcePath) return false
+        if (profile.status.lastStatus != RunStatus.NEVER_RUN || profile.status.lastRunAt != null) return false
+        val target = targets.firstOrNull { it.id == profile.targetId } ?: return false
+        return isAbandonedOnboardingTarget(target, defaultTarget)
+    }
+
+    private fun isAbandonedOnboardingTarget(target: TargetRecord, defaultTarget: TargetRecord): Boolean =
+        target.id != defaultTarget.id &&
+            target.name.startsWith("New target") &&
+            target.user == defaultTarget.user &&
+            target.lanHost == defaultTarget.lanHost &&
+            target.port == defaultTarget.port &&
+            target.tailscaleHost == defaultTarget.tailscaleHost &&
+            target.defaultRemotePath == defaultTarget.defaultRemotePath &&
+            target.publicKeyInstalledAt == null &&
+            target.keyOnlyLoginVerifiedAt == null
 
     private fun recoverInterruptedRunningBackup(state: AppState): AppState {
         val interruptedProfileId = state.queue.runningProfileId ?: return state

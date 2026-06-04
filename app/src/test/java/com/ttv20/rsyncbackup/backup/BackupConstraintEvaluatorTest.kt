@@ -61,7 +61,7 @@ class BackupConstraintEvaluatorTest {
         BackupProfile(
             id = "profile",
             name = "Phone",
-            serverId = "server",
+            targetId = "target",
             remotePath = "/mnt/backup/phone",
             constraints = constraints,
             excludes = "cache/\n",

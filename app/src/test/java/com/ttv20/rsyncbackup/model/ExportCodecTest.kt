@@ -31,6 +31,16 @@ class ExportCodecTest {
     }
 
     @Test
+    fun exportUsesTargetSchemaNames() {
+        val encoded = ExportCodec.encode(InitialData.appState("cache/").toExportDocument())
+
+        assertTrue(encoded.contains("\"targets\""))
+        assertTrue(encoded.contains("\"targetId\""))
+        assertFalse(encoded.contains("\"servers\""))
+        assertFalse(encoded.contains("\"serverId\""))
+    }
+
+    @Test
     fun importRestoresNonSecretConfigurationOnly() {
         val original = InitialData.appState("cache/").copy(
             sshKeySettings = GlobalSshKeySettings(
@@ -47,7 +57,7 @@ class ExportCodecTest {
         val imported = InitialData.appState("other/")
             .withImportedConfiguration(ExportCodec.decode(ExportCodec.encode(original.toExportDocument())))
 
-        assertEquals(original.servers, imported.servers)
+        assertEquals(original.targets, imported.targets)
         assertEquals(original.profiles.map { it.id }, imported.profiles.map { it.id })
         assertEquals("ssh-ed25519 AAA public", imported.sshKeySettings.publicKey)
         assertNull(imported.sshKeySettings.privateKeySecretAlias)

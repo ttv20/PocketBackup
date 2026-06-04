@@ -3,14 +3,14 @@ package com.ttv20.rsyncbackup.backup
 import com.ttv20.rsyncbackup.model.BackupProfile
 import com.ttv20.rsyncbackup.model.RemoteSafetySettings
 import com.ttv20.rsyncbackup.model.Route
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RemoteTargetCommandsTest {
-    private val server = ServerRecord(
-        id = "server",
+    private val target = TargetRecord(
+        id = "target",
         name = "Home",
         user = "ttv20",
         lanHost = "192.168.3.200",
@@ -18,7 +18,7 @@ class RemoteTargetCommandsTest {
     )
 
     private val connection = SshConnection(
-        server = server,
+        target = target,
         route = Route.LAN,
         binaryPaths = BinaryPaths("rsync", "ssh", "tsnet-nc"),
         sshKeyPath = "/files/id_ed25519",
@@ -88,7 +88,7 @@ class RemoteTargetCommandsTest {
     ) = BackupProfile(
         id = "profile",
         name = "Phone",
-        serverId = "server",
+        targetId = "target",
         remotePath = "/mnt/backup/phone",
         remoteSafety = remoteSafety,
         excludes = "cache/\n",

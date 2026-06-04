@@ -1,6 +1,6 @@
 package com.ttv20.rsyncbackup.backup
 
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 import com.ttv20.rsyncbackup.model.TrustedHostFingerprint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -24,8 +24,8 @@ class SshRuntimeFilesTest {
 
     @Test
     fun knownHostsUsesTrustedPublicKeyBlobAndPort() {
-        val server = ServerRecord(
-            id = "server",
+        val target = TargetRecord(
+            id = "target",
             name = "Home",
             user = "ttv20",
             lanHost = "192.168.3.200",
@@ -33,11 +33,11 @@ class SshRuntimeFilesTest {
             defaultRemotePath = "/mnt/backup/phone",
         )
         val text = SshRuntimeFiles.knownHostsText(
-            server = server,
+            target = target,
             trustedHostFingerprints = listOf(
                 TrustedHostFingerprint(
                     id = "fingerprint",
-                    serverId = "server",
+                    targetId = "target",
                     hostnames = listOf("192.168.3.200"),
                     port = 2222,
                     algorithm = "ssh-ed25519",

@@ -12,7 +12,7 @@ data class ExportDocument(
     val settings: GlobalSettings,
     val sshPublicKey: String? = null,
     val tailscale: ExportTailscaleMetadata,
-    val servers: List<ServerRecord>,
+    val targets: List<TargetRecord>,
     val profiles: List<BackupProfile>,
     val trustedHostFingerprints: List<TrustedHostFingerprint>,
 )
@@ -51,7 +51,7 @@ fun AppState.toExportDocument(now: String = Instant.now().toString()): ExportDoc
             lastReachabilityTestAt = tailscale.lastReachabilityTestAt,
             keyExpiryAdviceAcknowledged = tailscale.keyExpiryAdviceAcknowledged,
         ),
-        servers = servers,
+        targets = targets,
         profiles = profiles,
         trustedHostFingerprints = trustedHostFingerprints,
     )
@@ -65,7 +65,7 @@ fun AppState.withImportedConfiguration(document: ExportDocument): AppState =
             nodeName = document.tailscale.nodeName,
             keyExpiryAdviceAcknowledged = document.tailscale.keyExpiryAdviceAcknowledged,
         ),
-        servers = document.servers,
+        targets = document.targets,
         profiles = document.profiles.map { profile ->
             profile.copy(status = ProfileStatus(lastMessage = "Imported ${document.exportedAt}"))
         },

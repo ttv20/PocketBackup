@@ -32,7 +32,7 @@ class TailscaleLiveSmokeTest {
         val nodeName = smokeArg("nodeName") ?: "android-rsync-live-smoke"
 
         openScreen("Tailscale")
-        composeRule.onNodeWithText("Tailscale setup/status/test/reset").assertIsDisplayed()
+        composeRule.onNodeWithText("Tailscale Connection").assertIsDisplayed()
         replaceText("tailscale-node-name-field", nodeName)
         replaceText("tailscale-auth-key-field", authKey)
         clickTag("tailscale-authenticate-button")
@@ -64,7 +64,7 @@ class TailscaleLiveSmokeTest {
         )
 
         openScreen("Tailscale")
-        composeRule.onNodeWithText("Tailscale setup/status/test/reset").assertIsDisplayed()
+        composeRule.onNodeWithText("Tailscale Connection").assertIsDisplayed()
         runReachabilityTest(testHost, testPort)
     }
 

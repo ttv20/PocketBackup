@@ -2,7 +2,7 @@ package com.ttv20.rsyncbackup.backup
 
 import com.ttv20.rsyncbackup.model.BackupProfile
 import com.ttv20.rsyncbackup.model.Route
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 import com.ttv20.rsyncbackup.model.ShellArgs
 import com.ttv20.rsyncbackup.model.routeOrder
 
@@ -45,15 +45,15 @@ object RsyncCommandBuilder {
 
     fun firstRoute(profile: BackupProfile): Route = profile.targetMode.routeOrder().first()
 
-    fun targetHost(server: ServerRecord, route: Route): String = when (route) {
-        Route.LAN -> server.lanHost
-        Route.TAILSCALE -> requireNotNull(server.tailscaleHost) {
+    fun targetHost(target: TargetRecord, route: Route): String = when (route) {
+        Route.LAN -> target.lanHost.takeIf { it.isNotBlank() } ?: error("LAN route requires a LAN host")
+        Route.TAILSCALE -> target.tailscaleHost?.takeIf { it.isNotBlank() } ?: error(
             "Tailscale route requires a Tailscale host"
-        }
+        )
     }
 
     fun buildSshCommand(
-        server: ServerRecord,
+        target: TargetRecord,
         route: Route,
         binaryPaths: BinaryPaths,
         sshKeyPath: String,
@@ -66,7 +66,7 @@ object RsyncCommandBuilder {
         hostKeyAlias: String? = null,
     ): List<String> =
         buildSshArgs(
-            server = server,
+            target = target,
             route = route,
             binaryPaths = binaryPaths,
             sshKeyPath = sshKeyPath,
@@ -76,11 +76,11 @@ object RsyncCommandBuilder {
             usesAskpass = usesAskpass,
             connectPortOverride = connectPortOverride,
             hostKeyAlias = hostKeyAlias,
-        ) + "${server.user}@${connectHostOverride ?: targetHost(server, route)}"
+        ) + "${target.user}@${connectHostOverride ?: targetHost(target, route)}"
 
     fun build(
         profile: BackupProfile,
-        server: ServerRecord,
+        target: TargetRecord,
         route: Route,
         binaryPaths: BinaryPaths,
         sshKeyPath: String,
@@ -94,11 +94,11 @@ object RsyncCommandBuilder {
         hostKeyAlias: String? = null,
         dryRun: Boolean = false,
     ): RsyncCommand {
-        val targetHost = targetHost(server, route)
+        val targetHost = targetHost(target, route)
         val connectHost = connectHostOverride ?: targetHost
 
         val sshArgs = buildSshArgs(
-            server = server,
+            target = target,
             route = route,
             binaryPaths = binaryPaths,
             sshKeyPath = sshKeyPath,
@@ -118,7 +118,7 @@ object RsyncCommandBuilder {
         args += sshArgs.joinToString(" ") { shellQuote(it) }
         args += "--exclude-from=$excludesPath"
         args += ensureTrailingSlash(profile.sourcePath)
-        args += "${server.user}@$connectHost:${ensureTrailingSlash(profile.remotePath)}"
+        args += "${target.user}@$connectHost:${ensureTrailingSlash(profile.remotePath)}"
 
         return RsyncCommand(
             command = args,
@@ -129,7 +129,7 @@ object RsyncCommandBuilder {
     }
 
     private fun buildSshArgs(
-        server: ServerRecord,
+        target: TargetRecord,
         route: Route,
         binaryPaths: BinaryPaths,
         sshKeyPath: String,
@@ -145,7 +145,7 @@ object RsyncCommandBuilder {
             "-F",
             "/dev/null",
             "-p",
-            (connectPortOverride ?: server.port).toString(),
+            (connectPortOverride ?: target.port).toString(),
             "-i",
             sshKeyPath,
             "-o",

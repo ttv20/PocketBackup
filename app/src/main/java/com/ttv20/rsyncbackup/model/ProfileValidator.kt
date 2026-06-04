@@ -15,7 +15,7 @@ enum class Severity {
 object ProfileValidator {
     fun validate(profile: BackupProfile, state: AppState): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        val server = state.servers.firstOrNull { it.id == profile.serverId }
+        val target = state.targets.firstOrNull { it.id == profile.targetId }
 
         if (profile.name.isBlank()) {
             issues += ValidationIssue("profile_name_missing", "Profile name is required", Severity.ERROR)
@@ -26,19 +26,26 @@ object ProfileValidator {
         if (profile.remotePath.isBlank()) {
             issues += ValidationIssue("remote_path_missing", "Remote path is required", Severity.ERROR)
         }
-        if (server == null) {
-            issues += ValidationIssue("server_missing", "Selected server no longer exists", Severity.ERROR)
+        if (target == null) {
+            issues += ValidationIssue("target_missing", "Selected target no longer exists", Severity.ERROR)
             return issues
         }
 
-        if (server.user.isBlank() || server.lanHost.isBlank()) {
-            issues += ValidationIssue("server_incomplete", "Server user and LAN host are required", Severity.ERROR)
+        if (target.user.isBlank()) {
+            issues += ValidationIssue("target_user_missing", "Target user is required", Severity.ERROR)
         }
-        if (server.port !in 1..65535) {
-            issues += ValidationIssue("server_port_invalid", "Server port must be between 1 and 65535", Severity.ERROR)
+        if (target.port !in 1..65535) {
+            issues += ValidationIssue("target_port_invalid", "Target port must be between 1 and 65535", Severity.ERROR)
+        }
+        if (profile.targetMode.requiresLan() && target.lanHost.isBlank()) {
+            issues += ValidationIssue(
+                "lan_host_missing",
+                "This target mode needs a LAN host",
+                Severity.ERROR,
+            )
         }
         if (profile.targetMode.requiresTailscale()) {
-            if (server.tailscaleHost.isNullOrBlank()) {
+            if (target.tailscaleHost.isNullOrBlank()) {
                 issues += ValidationIssue(
                     "tailscale_host_missing",
                     "This target mode needs a Tailscale host",
@@ -77,7 +84,7 @@ object ProfileValidator {
     fun saveWarnings(profile: BackupProfile, state: AppState): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
         val remotePath = profile.remotePath.trim()
-        val server = state.servers.firstOrNull { it.id == profile.serverId }
+        val target = state.targets.firstOrNull { it.id == profile.targetId }
         if (profile.deleteEnabled && remotePathLooksBroad(remotePath)) {
             issues += ValidationIssue(
                 "remote_path_broad_delete",
@@ -85,10 +92,10 @@ object ProfileValidator {
                 Severity.WARNING,
             )
         }
-        if (profile.deleteEnabled && server != null && !remotePathWithinDefault(remotePath, server.defaultRemotePath)) {
+        if (profile.deleteEnabled && target != null && !remotePathWithinDefault(remotePath, target.defaultRemotePath)) {
             issues += ValidationIssue(
-                "remote_path_outside_server_default",
-                "Remote path differs from the selected server default; confirm it is a dedicated backup directory",
+                "remote_path_outside_target_default",
+                "Remote path differs from the selected target default; confirm it is a dedicated backup directory",
                 Severity.WARNING,
             )
         }

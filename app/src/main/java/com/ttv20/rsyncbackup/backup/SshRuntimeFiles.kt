@@ -1,6 +1,6 @@
 package com.ttv20.rsyncbackup.backup
 
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 import com.ttv20.rsyncbackup.model.TrustedHostFingerprint
 import java.util.Base64
 
@@ -17,17 +17,17 @@ object SshRuntimeFiles {
     }
 
     fun knownHostsText(
-        server: ServerRecord,
+        target: TargetRecord,
         trustedHostFingerprints: List<TrustedHostFingerprint>,
     ): String {
-        val serverIds = setOf(server.id, server.fingerprintGroupId)
+        val targetIds = setOf(target.id, target.fingerprintGroupId)
         val entries = trustedHostFingerprints
             .asSequence()
-            .filter { it.serverId in serverIds }
+            .filter { it.targetId in targetIds }
             .mapNotNull { entry ->
                 val publicKey = publicKeyBlob(entry.publicKey) ?: return@mapNotNull null
                 val hosts = entry.hostnames
-                    .ifEmpty { defaultHostnames(server) }
+                    .ifEmpty { defaultHostnames(target) }
                     .map { knownHostPattern(it, entry.port) }
                     .distinct()
                     .joinToString(",")
@@ -41,8 +41,8 @@ object SshRuntimeFiles {
         return if (entries.isEmpty()) "" else entries.joinToString(separator = "\n", postfix = "\n")
     }
 
-    private fun defaultHostnames(server: ServerRecord): List<String> =
-        listOfNotNull(server.lanHost, server.tailscaleHost)
+    private fun defaultHostnames(target: TargetRecord): List<String> =
+        listOfNotNull(target.lanHost, target.tailscaleHost)
 
     private fun knownHostPattern(hostname: String, port: Int): String {
         val host = hostname.trim()

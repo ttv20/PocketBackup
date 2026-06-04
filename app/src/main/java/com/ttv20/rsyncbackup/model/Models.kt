@@ -8,7 +8,7 @@ data class AppState(
     val settings: GlobalSettings = GlobalSettings(),
     val sshKeySettings: GlobalSshKeySettings = GlobalSshKeySettings(),
     val tailscale: TailscaleStateMetadata = TailscaleStateMetadata(),
-    val servers: List<ServerRecord> = emptyList(),
+    val targets: List<TargetRecord> = emptyList(),
     val profiles: List<BackupProfile> = emptyList(),
     val trustedHostFingerprints: List<TrustedHostFingerprint> = emptyList(),
     val logs: List<BackupLog> = emptyList(),
@@ -25,6 +25,9 @@ data class GlobalSettings(
     val allFilesAccessRequested: Boolean = true,
     val batteryOptimizationExemptionRequested: Boolean = true,
     val themePreference: ThemePreference = ThemePreference.SYSTEM,
+    val onboardingCompletedAt: String? = null,
+    val onboardingSkippedAt: String? = null,
+    val onboardingLastStep: String? = null,
 )
 
 @Serializable
@@ -56,7 +59,7 @@ data class TailscaleStateMetadata(
 )
 
 @Serializable
-data class ServerRecord(
+data class TargetRecord(
     val id: String,
     val name: String,
     val user: String,
@@ -65,12 +68,14 @@ data class ServerRecord(
     val port: Int = 22,
     val defaultRemotePath: String,
     val fingerprintGroupId: String = id,
+    val publicKeyInstalledAt: String? = null,
+    val keyOnlyLoginVerifiedAt: String? = null,
 )
 
 @Serializable
 data class TrustedHostFingerprint(
     val id: String,
-    val serverId: String,
+    val targetId: String,
     val hostnames: List<String>,
     val port: Int,
     val algorithm: String,
@@ -84,7 +89,7 @@ data class BackupProfile(
     val id: String,
     val name: String,
     val sourcePath: String = "/storage/emulated/0",
-    val serverId: String,
+    val targetId: String,
     val remotePath: String,
     val targetMode: TargetMode = TargetMode.LAN_FIRST_TAILSCALE_FALLBACK,
     val schedule: BackupSchedule = BackupSchedule(),
@@ -93,6 +98,7 @@ data class BackupProfile(
     val deleteEnabled: Boolean = true,
     val excludes: String,
     val advancedArgs: String = "",
+    val remoteSafetyReviewedAt: String? = null,
     val status: ProfileStatus = ProfileStatus(),
 )
 
@@ -230,13 +236,13 @@ enum class BackupEndReason {
 }
 
 object InitialData {
-    const val DEFAULT_SERVER_ID = "server-home"
+    const val DEFAULT_TARGET_ID = "target-home"
     const val DEFAULT_PROFILE_ID = "profile-phone"
 
     fun appState(defaultExcludes: String, now: String = Instant.now().toString()): AppState {
-        val server = ServerRecord(
-            id = DEFAULT_SERVER_ID,
-            name = "Home backup server",
+        val target = TargetRecord(
+            id = DEFAULT_TARGET_ID,
+            name = "Home backup target",
             user = "ttv20",
             lanHost = "192.168.3.200",
             tailscaleHost = null,
@@ -247,14 +253,14 @@ object InitialData {
             id = DEFAULT_PROFILE_ID,
             name = "Phone shared storage",
             sourcePath = "/storage/emulated/0",
-            serverId = server.id,
-            remotePath = server.defaultRemotePath,
+            targetId = target.id,
+            remotePath = target.defaultRemotePath,
             targetMode = TargetMode.LAN_ONLY,
             excludes = defaultExcludes.trimEnd(),
             status = ProfileStatus(lastMessage = "Created $now"),
         )
         return AppState(
-            servers = listOf(server),
+            targets = listOf(target),
             profiles = listOf(profile),
         )
     }
@@ -265,6 +271,13 @@ fun TargetMode.requiresTailscale(): Boolean = when (this) {
     TargetMode.LAN_FIRST_TAILSCALE_FALLBACK -> true
     TargetMode.TAILSCALE_FIRST_LAN_FALLBACK -> true
     TargetMode.TAILSCALE_ONLY -> true
+}
+
+fun TargetMode.requiresLan(): Boolean = when (this) {
+    TargetMode.LAN_ONLY -> true
+    TargetMode.LAN_FIRST_TAILSCALE_FALLBACK -> true
+    TargetMode.TAILSCALE_FIRST_LAN_FALLBACK -> true
+    TargetMode.TAILSCALE_ONLY -> false
 }
 
 fun TargetMode.routeOrder(): List<Route> = when (this) {

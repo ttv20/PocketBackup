@@ -28,7 +28,7 @@ class UserDrivenSetupSmokeTest {
         get() = composeRule.activity.application as RsyncBackupApplication
 
     @Test
-    fun configuresServerInstallsKeyAndRunsBackupThroughUi() {
+    fun configuresTargetInstallsKeyAndRunsBackupThroughUi() {
         val host = requiredSmokeArg("host")
         val port = requiredSmokeArg("port").toInt()
         val user = requiredSmokeArg("user")
@@ -37,40 +37,40 @@ class UserDrivenSetupSmokeTest {
         val sourceText = smokeArg("sourceText") ?: "ampere-redroid-ui-setup-smoke"
         val sourceDir = prepareSourceTree(sourceText)
 
-        openScreen("SSH keys")
+        openScreen("SSH Access")
         clickTag("ssh-generate-key-button")
         composeRule.waitUntil(10_000) {
             app.repository.state.value.sshKeySettings.publicKey?.startsWith("ssh-ed25519 ") == true
         }
 
-        openScreen("Servers")
-        openFirstServerEditor()
-        replaceText("server-user-field", user)
-        replaceText("server-lan-host-field", host)
-        replaceText("server-port-field", port.toString())
-        replaceText("server-default-remote-path-field", remotePath)
-        clickTag("server-save-button")
+        openScreen("Targets")
+        openFirstTargetEditor()
+        replaceText("target-user-field", user)
+        replaceText("target-lan-host-field", host)
+        replaceText("target-port-field", port.toString())
+        replaceText("target-default-remote-path-field", remotePath)
+        clickTag("target-save-button")
         composeRule.waitUntil(10_000) {
-            val server = app.repository.state.value.servers.first { it.id == InitialData.DEFAULT_SERVER_ID }
-            server.user == user &&
-                server.lanHost == host &&
-                server.port == port &&
-                server.defaultRemotePath == remotePath
+            val target = app.repository.state.value.targets.first { it.id == InitialData.DEFAULT_TARGET_ID }
+            target.user == user &&
+                target.lanHost == host &&
+                target.port == port &&
+                target.defaultRemotePath == remotePath
         }
 
-        openScreen("Servers")
-        openFirstServerEditor()
-        clickTag("server-scan-lan-button")
-        waitForTag("server-trust-scanned-key-button", 45_000)
-        clickTag("server-trust-scanned-key-button")
+        openScreen("Targets")
+        openFirstTargetEditor()
+        clickTag("target-scan-lan-button")
+        waitForTag("target-trust-scanned-key-button", 45_000)
+        clickTag("target-trust-scanned-key-button")
         composeRule.waitUntil(10_000) {
             app.repository.state.value.trustedHostFingerprints.any {
                 it.hostnames.contains(host) && it.port == port && it.publicKey != null
             }
         }
 
-        replaceText("server-setup-password-field", password)
-        clickTag("server-install-over-lan-button")
+        replaceText("target-setup-password-field", password)
+        clickTag("target-install-over-lan-button")
         waitForText("Public key installed over LAN", 90_000)
 
         openScreen("Profiles")
@@ -147,7 +147,7 @@ class UserDrivenSetupSmokeTest {
         composeRule.waitForIdle()
     }
 
-    private fun openFirstServerEditor() {
+    private fun openFirstTargetEditor() {
         composeRule.onAllNodesWithText("Edit")[0].performClick()
         composeRule.waitForIdle()
     }

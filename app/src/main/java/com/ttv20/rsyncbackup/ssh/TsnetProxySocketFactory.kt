@@ -48,10 +48,10 @@ class TsnetProxySocketFactory(
 
     private fun openSocket(): Socket {
         val loopback = InetAddress.getByName("127.0.0.1")
-        val server = ServerSocket(0, 1, loopback)
+        val target = ServerSocket(0, 1, loopback)
         val acceptThread = thread(name = "tsnet-proxy-accept", isDaemon = true) {
             runCatching {
-                server.use {
+                target.use {
                     val localSocket = it.accept()
                     it.close()
                     localSocket.use(::bridge)
@@ -64,9 +64,9 @@ class TsnetProxySocketFactory(
 
         return Socket().also { socket ->
             try {
-                socket.connect(InetSocketAddress(loopback, server.localPort), connectTimeoutMillis)
+                socket.connect(InetSocketAddress(loopback, target.localPort), connectTimeoutMillis)
             } catch (error: Exception) {
-                runCatching { server.close() }
+                runCatching { target.close() }
                 bridgeThreads.remove(acceptThread)
                 throw error
             }

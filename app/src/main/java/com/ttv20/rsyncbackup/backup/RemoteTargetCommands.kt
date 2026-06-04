@@ -2,10 +2,10 @@ package com.ttv20.rsyncbackup.backup
 
 import com.ttv20.rsyncbackup.model.BackupProfile
 import com.ttv20.rsyncbackup.model.Route
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 
 data class SshConnection(
-    val server: ServerRecord,
+    val target: TargetRecord,
     val route: Route,
     val binaryPaths: BinaryPaths,
     val sshKeyPath: String,
@@ -72,7 +72,7 @@ object RemoteTargetCommands {
 
     private fun baseSsh(connection: SshConnection): List<String> =
         RsyncCommandBuilder.buildSshCommand(
-            server = connection.server,
+            target = connection.target,
             route = connection.route,
             binaryPaths = connection.binaryPaths,
             sshKeyPath = connection.sshKeyPath,

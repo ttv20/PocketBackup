@@ -16,7 +16,7 @@ import com.ttv20.rsyncbackup.model.RemoteSafetySettings
 import com.ttv20.rsyncbackup.model.RunProgressState
 import com.ttv20.rsyncbackup.model.RunStatus
 import com.ttv20.rsyncbackup.model.ScheduleType
-import com.ttv20.rsyncbackup.model.ServerRecord
+import com.ttv20.rsyncbackup.model.TargetRecord
 import com.ttv20.rsyncbackup.model.TailscaleStateMetadata
 import com.ttv20.rsyncbackup.model.TargetMode
 import com.ttv20.rsyncbackup.model.TrustedHostFingerprint
@@ -62,12 +62,12 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
         Thread {
             runCatching {
                 val state = app.repository.state.value
-                val server = state.servers.first { it.id == SERVER_ID }
+                val target = state.targets.first { it.id == SERVER_ID }
                 val publicKey = requireNotNull(config.publicKey) {
                     "Public key is required for password setup smoke"
                 }
                 SshPasswordSetupClient().installPublicKey(
-                    server = server,
+                    target = target,
                     trustedHostFingerprints = state.trustedHostFingerprints,
                     publicKey = publicKey,
                     password = config.setupPassword,
@@ -105,9 +105,9 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
             .plusMinutes(delayMinutes.toLong())
             .format(DateTimeFormatter.ofPattern("HH:mm"))
         val now = Instant.now().toString()
-        val server = ServerRecord(
+        val target = TargetRecord(
             id = SCHEDULE_SERVER_ID,
-            name = "Debug scheduled constraint server",
+            name = "Debug scheduled constraint target",
             user = "debug",
             lanHost = "127.0.0.1",
             port = 22,
@@ -118,8 +118,8 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
             id = SCHEDULE_PROFILE_ID,
             name = "Debug scheduled constraint backup",
             sourcePath = "/storage/emulated/0",
-            serverId = SCHEDULE_SERVER_ID,
-            remotePath = server.defaultRemotePath,
+            targetId = SCHEDULE_SERVER_ID,
+            remotePath = target.defaultRemotePath,
             targetMode = TargetMode.LAN_ONLY,
             schedule = BackupSchedule(type = scheduleType, timeLocal = timeLocal),
             constraints = ConstraintSettings(
@@ -136,7 +136,7 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
         app.repository.update { state ->
             state.copy(
                 settings = state.settings.copy(selectedSsid = "debug-ssid-that-should-not-match"),
-                servers = state.servers.filterNot { it.id == SCHEDULE_SERVER_ID } + server,
+                targets = state.targets.filterNot { it.id == SCHEDULE_SERVER_ID } + target,
                 profiles = state.profiles.filterNot { it.id == SCHEDULE_PROFILE_ID } + profile,
                 queue = BackupQueueState(),
                 runProgress = RunProgressState(),
@@ -148,9 +148,9 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
     private fun runTailscaleFailureSmoke(context: Context) {
         val app = context.applicationContext as RsyncBackupApplication
         val now = Instant.now().toString()
-        val server = ServerRecord(
+        val target = TargetRecord(
             id = TAILSCALE_FAILURE_SERVER_ID,
-            name = "Debug Tailscale failure server",
+            name = "Debug Tailscale failure target",
             user = "debug",
             lanHost = "192.0.2.10",
             tailscaleHost = "debug-tailnet-host",
@@ -162,8 +162,8 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
             id = TAILSCALE_FAILURE_PROFILE_ID,
             name = "Debug Tailscale failure backup",
             sourcePath = "/storage/emulated/0",
-            serverId = TAILSCALE_FAILURE_SERVER_ID,
-            remotePath = server.defaultRemotePath,
+            targetId = TAILSCALE_FAILURE_SERVER_ID,
+            remotePath = target.defaultRemotePath,
             targetMode = TargetMode.TAILSCALE_ONLY,
             constraints = ConstraintSettings(batteryNotLow = false),
             remoteSafety = RemoteSafetySettings(createDirectoryIfMissing = true),
@@ -175,7 +175,7 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
         app.repository.update { state ->
             state.copy(
                 tailscale = TailscaleStateMetadata(),
-                servers = state.servers.filterNot { it.id == TAILSCALE_FAILURE_SERVER_ID } + server,
+                targets = state.targets.filterNot { it.id == TAILSCALE_FAILURE_SERVER_ID } + target,
                 profiles = state.profiles.filterNot { it.id == TAILSCALE_FAILURE_PROFILE_ID } + profile,
                 queue = BackupQueueState(),
                 runProgress = RunProgressState(),
@@ -280,9 +280,9 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
 
     private fun AppState.withSmokeConfig(config: SmokeConfig, sourcePath: String): AppState {
         val now = Instant.now().toString()
-        val server = ServerRecord(
+        val target = TargetRecord(
             id = SERVER_ID,
-            name = "Ampere smoke SSH server",
+            name = "Ampere smoke SSH target",
             user = config.user,
             lanHost = config.host,
             port = config.port,
@@ -293,7 +293,7 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
             id = PROFILE_ID,
             name = "Debug smoke backup",
             sourcePath = sourcePath,
-            serverId = SERVER_ID,
+            targetId = SERVER_ID,
             remotePath = config.remotePath,
             targetMode = TargetMode.LAN_ONLY,
             constraints = if (config.selectedSsidConstraint) {
@@ -317,7 +317,7 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
         val trustedHosts = config.hostKeys.mapIndexed { index, hostKey ->
             TrustedHostFingerprint(
                 id = "debug-smoke-host-key-$index",
-                serverId = SERVER_ID,
+                targetId = SERVER_ID,
                 hostnames = listOf(config.host),
                 port = config.port,
                 algorithm = hostKey.algorithm,
@@ -343,10 +343,10 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
                     config.privateKeyPassphrase != null
                 },
             ),
-            servers = servers.filterNot { it.id == SERVER_ID } + server,
+            targets = targets.filterNot { it.id == SERVER_ID } + target,
             profiles = profiles.filterNot { it.id == PROFILE_ID } + profile,
             trustedHostFingerprints = trustedHostFingerprints
-                .filterNot { it.serverId == SERVER_ID } + trustedHosts,
+                .filterNot { it.targetId == SERVER_ID } + trustedHosts,
             queue = BackupQueueState(),
             runProgress = RunProgressState(),
         )
@@ -529,11 +529,11 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
         const val EXTRA_TAILSCALE_TEST_HOST = "testHost"
         const val EXTRA_TAILSCALE_TEST_PORT = "testPort"
 
-        const val SERVER_ID = "debug-smoke-server"
+        const val SERVER_ID = "debug-smoke-target"
         const val PROFILE_ID = "debug-smoke-profile"
-        const val SCHEDULE_SERVER_ID = "debug-schedule-constraint-server"
+        const val SCHEDULE_SERVER_ID = "debug-schedule-constraint-target"
         const val SCHEDULE_PROFILE_ID = "debug-schedule-constraint-profile"
-        const val TAILSCALE_FAILURE_SERVER_ID = "debug-tailscale-failure-server"
+        const val TAILSCALE_FAILURE_SERVER_ID = "debug-tailscale-failure-target"
         const val TAILSCALE_FAILURE_PROFILE_ID = "debug-tailscale-failure-profile"
         private const val PRIVATE_KEY_ALIAS = "debug-smoke-private-key"
         private const val PRIVATE_KEY_PASSPHRASE_ALIAS = "debug-smoke-private-key-passphrase"

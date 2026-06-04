@@ -3,6 +3,9 @@
     <style name="Theme.RsyncBackup" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">#F7FAF9</item>
+        <item name="android:statusBarColor">#F7FAF9</item>
+        <item name="android:navigationBarColor">#F7FAF9</item>
         <item name="android:colorAccent">@color/seed</item>
     </style>
 </resources>
