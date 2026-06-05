@@ -3,6 +3,9 @@ package com.ttv20.rsyncbackup.model
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.time.Instant
 
 @Serializable
@@ -35,9 +38,47 @@ object ExportCodec {
 
     fun encode(document: ExportDocument): String = json.encodeToString(document)
 
-    fun decode(text: String): ExportDocument =
-        json.decodeFromString(ExportDocument.serializer(), text)
+    fun decode(text: String): ExportDocument {
+        val document = json.decodeFromString(ExportDocument.serializer(), text)
+        return document.copy(
+            profiles = document.profiles.withLegacySelectedSsid(legacySelectedSsid(text)),
+        )
+    }
+
+    fun decodeAppState(text: String): AppState {
+        val state = json.decodeFromString(AppState.serializer(), text)
+        return state.copy(
+            profiles = state.profiles.withLegacySelectedSsid(legacySelectedSsid(text)),
+        )
+    }
+
+    private fun legacySelectedSsid(text: String): String? =
+        runCatching {
+            json.parseToJsonElement(text)
+                .jsonObject["settings"]
+                ?.jsonObject
+                ?.get("selectedSsid")
+                ?.jsonPrimitive
+                ?.contentOrNull
+                ?.cleanSsid()
+        }.getOrNull()
+
+    private fun List<BackupProfile>.withLegacySelectedSsid(legacySelectedSsid: String?): List<BackupProfile> {
+        val ssid = legacySelectedSsid?.cleanSsid() ?: return this
+        return map { profile ->
+            if (profile.constraints.selectedSsidOnly && profile.constraints.selectedSsid.isNullOrBlank()) {
+                profile.copy(constraints = profile.constraints.copy(selectedSsid = ssid))
+            } else {
+                profile
+            }
+        }
+    }
 }
+
+private fun String.cleanSsid(): String? =
+    trim()
+        .trim('"')
+        .takeIf { it.isNotBlank() }
 
 fun AppState.toExportDocument(now: String = Instant.now().toString()): ExportDocument =
     ExportDocument(

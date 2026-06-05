@@ -77,7 +77,6 @@ class BackupService : Service() {
         val failures = BackupConstraintEvaluator.failures(
             profile = profile,
             snapshot = AndroidConstraintSnapshotReader(this).read(),
-            selectedSsid = app.repository.state.value.settings.selectedSsid,
         )
 
         startForeground(NOTIFICATION_ID, runningNotification("Checking backup constraints"))

@@ -125,6 +125,7 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
             constraints = ConstraintSettings(
                 batteryNotLow = false,
                 selectedSsidOnly = true,
+                selectedSsid = DEBUG_NON_MATCHING_SSID,
                 manualOverrideAllowed = true,
             ),
             remoteSafety = RemoteSafetySettings(createDirectoryIfMissing = true),
@@ -135,7 +136,6 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
 
         app.repository.update { state ->
             state.copy(
-                settings = state.settings.copy(selectedSsid = "debug-ssid-that-should-not-match"),
                 targets = state.targets.filterNot { it.id == SCHEDULE_SERVER_ID } + target,
                 profiles = state.profiles.filterNot { it.id == SCHEDULE_PROFILE_ID } + profile,
                 queue = BackupQueueState(),
@@ -300,6 +300,7 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
                 ConstraintSettings(
                     batteryNotLow = false,
                     selectedSsidOnly = true,
+                    selectedSsid = DEBUG_NON_MATCHING_SSID,
                     manualOverrideAllowed = true,
                 )
             } else {
@@ -329,11 +330,6 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
         return copy(
             settings = settings.copy(
                 phoneHostname = "redroid-smoke",
-                selectedSsid = if (config.selectedSsidConstraint) {
-                    "debug-ssid-that-should-not-match"
-                } else {
-                    settings.selectedSsid
-                },
             ),
             sshKeySettings = GlobalSshKeySettings(
                 publicKey = config.publicKey,
@@ -533,6 +529,7 @@ class DebugBackupSmokeReceiver : BroadcastReceiver() {
         const val PROFILE_ID = "debug-smoke-profile"
         const val SCHEDULE_SERVER_ID = "debug-schedule-constraint-target"
         const val SCHEDULE_PROFILE_ID = "debug-schedule-constraint-profile"
+        const val DEBUG_NON_MATCHING_SSID = "debug-ssid-that-should-not-match"
         const val TAILSCALE_FAILURE_SERVER_ID = "debug-tailscale-failure-target"
         const val TAILSCALE_FAILURE_PROFILE_ID = "debug-tailscale-failure-profile"
         private const val PRIVATE_KEY_ALIAS = "debug-smoke-private-key"

@@ -23,7 +23,6 @@ data class AppPermissionState(
         get() = allFilesAccess &&
             batteryOptimizationExempt &&
             exactAlarmAccess &&
-            wifiStateAccess &&
             notifications
 }
 
@@ -36,6 +35,8 @@ class PermissionStateReader(private val context: Context) {
             batteryOptimizationExempt = powerManager.isIgnoringBatteryOptimizations(context.packageName),
             exactAlarmAccess = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms(),
             wifiStateAccess = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_WIFI_STATE) ==
+                PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED,
             notifications = Build.VERSION.SDK_INT < 33 ||
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==

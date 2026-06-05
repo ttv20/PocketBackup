@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.net.wifi.WifiManager
 import android.os.BatteryManager
 
 class AndroidConstraintSnapshotReader(private val context: Context) {
@@ -20,18 +19,9 @@ class AndroidConstraintSnapshotReader(private val context: Context) {
             isUnmetered = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true,
             isCharging = battery.isCharging(),
             isBatteryLow = battery.isBatteryLow(),
-            ssid = currentSsid(),
+            ssid = AndroidWifiNetworkReader(context).currentSsid(),
         )
     }
-
-    private fun currentSsid(): String? =
-        runCatching {
-            context.applicationContext
-                .getSystemService(WifiManager::class.java)
-                ?.connectionInfo
-                ?.ssid
-                ?.takeUnless { it == WifiManager.UNKNOWN_SSID }
-        }.getOrNull()
 
     private fun Intent?.isCharging(): Boolean {
         val status = this?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: return false

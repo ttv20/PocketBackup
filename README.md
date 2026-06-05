@@ -2,42 +2,41 @@
 
 # PocketBackup
 
-PocketBackup backs up Android shared storage to a server you control. It runs
-`rsync` over SSH from the phone, with an optional built-in Tailscale route for
-servers that are not reachable on the local network.
+PocketBackup backs up your Android files to a server you own, using `rsync` over
+SSH. No root, no Termux, no cloud middleman — `rsync`, OpenSSH, and Tailscale are
+all bundled into the APK, so the phone has everything it needs out of the box.
 
-## What It Does
+Point a profile at a folder (typically under `/storage/emulated/0`), pick the
+server and remote path, and it syncs. If the server isn't on your local network,
+it can connect over Tailscale instead.
 
-- Backs up a selected filesystem path, usually under `/storage/emulated/0`.
-- Uses bundled `rsync` and OpenSSH binaries; Termux is not required.
-- Supports LAN-only, Tailscale-only, and LAN/Tailscale fallback targets.
-- Generates or stores an Ed25519 SSH key and can install the public key with
-  temporary password auth.
-- Scans and stores SSH host key fingerprints before backup runs.
-- Runs profiles manually or on daily exact/best-effort schedules.
-- Can require Wi-Fi, unmetered network, charging, battery-not-low, or a selected
-  SSID before scheduled backups.
-- Shows foreground backup progress, recent output, final stats, and retained
-  run logs.
-- Exports/imports non-secret configuration.
+## Features
 
-## Limits
+- **Key-based auth.** Generates an Ed25519 key, or uses one you provide. It can
+  install the public key on the server for you the first time using a temporary
+  password, then switches to key-only.
+- **Pinned host keys.** SSH fingerprints are scanned and stored before a backup
+  runs, so connections are verified rather than trusted blindly.
+- **Flexible routing.** LAN-only, Tailscale-only, or LAN with a Tailscale
+  fallback for when you're off your home network.
+- **Manual or scheduled.** Run a backup on demand, or set a daily schedule —
+  exact alarms where Android permits, best-effort otherwise.
+- **Conditional runs.** Gate scheduled backups on Wi-Fi, unmetered network,
+  charging, battery level, or a specific SSID.
+- **Visibility.** Live progress, final transfer stats, and retained logs from
+  previous runs.
+- **Config export/import.** Move your setup between devices (secrets excluded —
+  see below).
 
-- Android 10/API 29 or newer.
-- `arm64-v8a` devices only.
-- The app requests all-files access so it can read the configured source tree.
-- Private SSH keys, passphrases, passwords, Tailscale auth keys, and Tailscale
-  state are stored locally and are not included in export files.
-- No remote sudo flow. The configured SSH account must be able to create and
-  write the backup directory.
+## Delete safety
 
-## Remote Directory Safety
+Before any backup that uses `rsync --delete`, PocketBackup checks the target for
+a marker file, `.android-rsync-backup-root`. If the directory is non-empty and
+unmarked, the app won't write to it until the profile explicitly allows that
+target. This keeps a misconfigured path from wiping a directory that isn't a
+backup root.
 
-Before a delete-enabled backup, PocketBackup checks the remote directory for a
-marker file named `.android-rsync-backup-root`. If the directory is non-empty
-and unmarked, the profile must explicitly allow it before the app writes there.
-
-PocketBackup writes these files in the backup root:
+It maintains three files in the backup root:
 
 ```text
 .android-rsync-backup-root
@@ -45,22 +44,34 @@ PocketBackup writes these files in the backup root:
 .backup-last.log
 ```
 
-## Build
+## Requirements
 
-Use the Docker build script. It supplies the Android build environment, so the
-host does not need a JDK or Android SDK:
+- Android 10 (API 29) or newer, `arm64-v8a` only.
+- All-files access, so the app can read the source folder.
+- An SSH server where the login account can create and write the backup
+  directory. There's no remote `sudo` — the app only writes where that account
+  already can.
+
+Secrets stay on the device. Private SSH keys, passphrases, passwords, Tailscale
+auth keys, and Tailscale state are never written to export files, so an export
+is safe to share but carries no credentials.
+
+## Building
+
+The Docker build provides the full Android toolchain, so the host needs no JDK
+or Android SDK:
 
 ```bash
 ./scripts/docker-build-debug.sh
 ```
 
-The APK is written to:
+Output:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Install it on a connected device:
+Install on a connected device:
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -72,8 +83,8 @@ Run unit tests:
 ./scripts/docker-test.sh
 ```
 
-Refresh bundled native assets only when changing the rsync/OpenSSH/Tailscale
-payload:
+Rebuild the bundled native binaries only when changing the
+rsync/OpenSSH/Tailscale payload:
 
 ```bash
 ./scripts/fetch-termux-native-binaries.py
@@ -81,7 +92,7 @@ payload:
 ./scripts/stage-native-assets.sh
 ```
 
-## Release Notes For Maintainers
+## Release builds
 
 Release builds use the same Docker image:
 
@@ -89,7 +100,7 @@ Release builds use the same Docker image:
 ./scripts/docker-build-release.sh
 ```
 
-For a local signed release build, set:
+A local signed build reads these from the environment:
 
 ```text
 POCKETSYNC_RELEASE_STORE_FILE
@@ -100,8 +111,8 @@ POCKETSYNC_VERSION_CODE
 POCKETSYNC_VERSION_NAME
 ```
 
-The GitHub release workflow is `.github/workflows/release-apk.yml` and runs on
-`v*` tags. Its repository secrets are:
+The release workflow (`.github/workflows/release-apk.yml`) runs on `v*` tags and
+uses these repository secrets:
 
 ```text
 POCKETSYNC_RELEASE_KEYSTORE_B64
@@ -110,7 +121,7 @@ POCKETSYNC_RELEASE_KEY_ALIAS
 POCKETSYNC_RELEASE_KEY_PASSWORD
 ```
 
-## More
+## Documentation
 
 - Setup and server details: [docs/setup.md](docs/setup.md)
 - F-Droid readiness notes: [docs/fdroid-readiness-plan.md](docs/fdroid-readiness-plan.md)

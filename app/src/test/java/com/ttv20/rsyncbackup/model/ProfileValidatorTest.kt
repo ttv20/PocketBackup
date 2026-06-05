@@ -31,6 +31,18 @@ class ProfileValidatorTest {
     }
 
     @Test
+    fun selectedSsidConstraintRequiresProfileSsid() {
+        val state = configuredState()
+        val profile = state.profiles.first().copy(
+            constraints = ConstraintSettings(selectedSsidOnly = true),
+        )
+
+        val issues = ProfileValidator.validate(profile, state)
+
+        assertTrue(issues.any { it.code == "ssid_missing" })
+    }
+
+    @Test
     fun lanModeRequiresLanHost() {
         val state = configuredState()
         val target = state.targets.first().copy(lanHost = "", tailscaleHost = "home-tailnet")

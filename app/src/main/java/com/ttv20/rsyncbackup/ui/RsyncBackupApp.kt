@@ -78,9 +78,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -136,6 +139,7 @@ import com.ttv20.rsyncbackup.R
 import com.ttv20.rsyncbackup.backup.BackupService
 import com.ttv20.rsyncbackup.backup.BinaryPaths
 import com.ttv20.rsyncbackup.backup.AndroidConstraintSnapshotReader
+import com.ttv20.rsyncbackup.backup.AndroidWifiNetworkReader
 import com.ttv20.rsyncbackup.backup.BackupConstraintEvaluator
 import com.ttv20.rsyncbackup.backup.ConstraintSnapshot
 import com.ttv20.rsyncbackup.backup.NativeBinaryManager
@@ -173,10 +177,7 @@ import com.ttv20.rsyncbackup.model.withUpdatedSettings
 import com.ttv20.rsyncbackup.permissions.PermissionIntents
 import com.ttv20.rsyncbackup.permissions.PermissionStateReader
 import com.ttv20.rsyncbackup.scheduling.BackupScheduler
-import com.ttv20.rsyncbackup.ssh.ScannedHostKey
-import com.ttv20.rsyncbackup.ssh.SshHostKeyScanner
 import com.ttv20.rsyncbackup.ssh.SshKeyManager
-import com.ttv20.rsyncbackup.ssh.SshPasswordSetupClient
 import com.ttv20.rsyncbackup.ssh.SshRemotePathBrowser
 import com.ttv20.rsyncbackup.ssh.SshRemotePathBrowserSession
 import com.ttv20.rsyncbackup.ssh.SshRemotePathListing
@@ -212,7 +213,6 @@ private const val MAX_PORT = 65535
 private enum class OnboardingStep(val title: String) {
     Welcome("Welcome"),
     Permissions("Permissions"),
-    SshAccess("SSH Access"),
     Tailscale("Tailscale Connection"),
     NewTarget("New Target"),
     NewProfile("New Profile"),
@@ -776,10 +776,12 @@ private fun OnboardingFlow(
         mutableStateOf<String?>(profileDraft.id.takeIf { state.profiles.any { profile -> profile.id == profileDraft.id } })
     }
     var dryRunResult by remember { mutableStateOf<DryRunResult?>(null) }
+    var childBackHandler by remember { mutableStateOf<(() -> Unit)?>(null) }
     val step = OnboardingStep.valueOf(currentStep)
     val stepIndex = OnboardingSteps.indexOf(step).coerceAtLeast(0)
 
     LaunchedEffect(currentStep) {
+        childBackHandler = null
         repository.update { appState ->
             appState.copy(settings = appState.settings.copy(onboardingLastStep = currentStep))
         }
@@ -865,7 +867,7 @@ private fun OnboardingFlow(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             ) {
                 IconButton(
-                    onClick = { requestNavigation(PendingOnboardingNavigation.Back) },
+                    onClick = { childBackHandler?.invoke() ?: requestNavigation(PendingOnboardingNavigation.Back) },
                     enabled = stepIndex > 0,
                 ) {
                     Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
@@ -900,13 +902,8 @@ private fun OnboardingFlow(
                 OnboardingStep.Permissions -> OnboardingPermissionsStep(
                     permissions = permissions,
                     onRefreshPermissions = onRefreshPermissions,
-                    onContinue = { goTo(OnboardingStep.SshAccess) },
-                )
-                OnboardingStep.SshAccess -> OnboardingWrappedScreen(
                     onContinue = { goTo(OnboardingStep.Tailscale) },
-                ) {
-                    SshKeysScreen(state, repository, secretStore)
-                }
+                )
                 OnboardingStep.Tailscale -> OnboardingWrappedScreen(
                     onContinue = { goTo(OnboardingStep.NewTarget) },
                 ) {
@@ -917,19 +914,24 @@ private fun OnboardingFlow(
                     target = targetDraft,
                     repository = repository,
                     secretStore = secretStore,
-                    onTargetChange = { targetDraft = it },
-                    onSave = {
-                        saveTargetDraft()
+                    onBack = { goTo(OnboardingStep.Tailscale) },
+                    onBackHandlerChange = { childBackHandler = it },
+                    onSave = { savedTarget ->
+                        targetDraft = savedTarget
+                        savedTargetId = savedTarget.id
                         goTo(OnboardingStep.NewProfile)
                     },
                 )
                 OnboardingStep.NewProfile -> OnboardingProfileStep(
                     state = state,
                     profile = profileDraft,
+                    repository = repository,
                     secretStore = secretStore,
-                    onProfileChange = { profileDraft = it },
-                    onSave = {
-                        saveProfileDraft()
+                    onBack = { goTo(OnboardingStep.NewTarget) },
+                    onBackHandlerChange = { childBackHandler = it },
+                    onSave = { savedProfile ->
+                        profileDraft = savedProfile
+                        savedProfileId = savedProfile.id
                         goTo(OnboardingStep.Review)
                     },
                 )
@@ -963,7 +965,12 @@ private fun WelcomeStep(onStart: () -> Unit, onSkip: () -> Unit) {
     ) {
         SectionHeader("Welcome")
         SectionCard {
-            Text("Set up permissions, SSH access, a backup target, and a profile. Every step can be skipped.")
+            Text("Set up the permissions, optional Tailscale connection, server target, and backup profile.")
+            Text(
+                "The app creates its SSH key automatically. You only need to connect to the server and choose where backups go.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onStart, modifier = Modifier.testTag("onboarding-start-button")) {
                     Text("Start setup")
@@ -989,6 +996,11 @@ private fun OnboardingPermissionsStep(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        Text(
+            "Grant the permissions needed for scheduled file backups. Network-name access is optional.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         PermissionSettingsSection(permissions, onRefreshPermissions)
         Button(onClick = onContinue, modifier = Modifier.testTag("onboarding-permissions-continue-button")) {
             Text("Continue")
@@ -1027,476 +1039,58 @@ private fun OnboardingTargetStep(
     target: TargetRecord,
     repository: AppRepository,
     secretStore: SecretStore,
-    onTargetChange: (TargetRecord) -> Unit,
-    onSave: () -> Unit,
+    onBack: () -> Unit,
+    onBackHandlerChange: ((() -> Unit)?) -> Unit,
+    onSave: (TargetRecord) -> Unit,
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var pendingHostKeys by remember(target.id) { mutableStateOf<List<ScannedHostKey>>(emptyList()) }
-    var scanTarget by remember(target.id) { mutableStateOf<String?>(null) }
-    var scanMessage by remember(target.id) { mutableStateOf<String?>(null) }
-    var scanError by remember(target.id) { mutableStateOf<String?>(null) }
-    var setupPassword by remember(target.id) { mutableStateOf("") }
-    var setupTarget by remember(target.id) { mutableStateOf<String?>(null) }
-    var setupMessage by remember(target.id) { mutableStateOf<String?>(null) }
-    var setupError by remember(target.id) { mutableStateOf<String?>(null) }
-    var portText by rememberSaveable(target.id) { mutableStateOf(target.port.toString()) }
-    val portIsValid = portFromText(portText) != null
-    var browserRequest by remember(target.id) { mutableStateOf<RemotePathBrowseRequest?>(null) }
-    val trustedEntries = state.trustedHostFingerprints.filter {
-        it.targetId == target.id || it.targetId == target.fingerprintGroupId
-    }
-    val setupPrerequisiteMessage = publicKeySetupPrerequisiteMessage(
-        publicKeyInstalled = target.publicKeyInstalledAt != null,
-        setupPassword = setupPassword,
-        publicKey = state.sshKeySettings.publicKey,
-        hasTrustedHostKey = trustedEntries.isNotEmpty(),
+    TargetEditor(
+        state = state,
+        target = target,
+        repository = repository,
+        secretStore = secretStore,
+        onSave = onSave,
+        onBack = onBack,
+        onBackHandlerChange = onBackHandlerChange,
+        isDraft = state.targets.none { it.id == target.id },
+        cancelLabel = "Back",
+        showEditorHeader = false,
+        modifier = Modifier.fillMaxSize(),
     )
-    browserRequest?.let { request ->
-        RemotePathBrowserScreen(
-            title = request.title,
-            state = state,
-            target = request.target,
-            routes = request.routes,
-            startPath = request.startPath,
-            secretStore = secretStore,
-            onPathSelected = { selectedPath ->
-                onTargetChange(target.copy(defaultRemotePath = selectedPath))
-                browserRequest = null
-            },
-            onBack = { browserRequest = null },
-            modifier = Modifier.fillMaxSize(),
-        )
-        return
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        SectionCard {
-            Text("Target details", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(target.name, { onTargetChange(target.copy(name = it)) }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(target.user, { onTargetChange(target.copy(user = it)) }, label = { Text("User") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(target.lanHost, { onTargetChange(target.copy(lanHost = it)) }, label = { Text("Server address") }, modifier = Modifier.fillMaxWidth())
-            PortTextField(
-                value = portText,
-                onValueChange = { value ->
-                    portText = value
-                    portFromText(value)?.let { onTargetChange(target.copy(port = it)) }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            TailscaleHostPicker(
-                state = state,
-                secretStore = secretStore,
-                value = target.tailscaleHost.orEmpty(),
-                onValueChange = { onTargetChange(target.copy(tailscaleHost = it.ifBlank { null })) },
-                label = "Tailscale device",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            RemotePathPickerField(
-                value = target.defaultRemotePath,
-                onValueChange = { onTargetChange(target.copy(defaultRemotePath = it)) },
-                label = { Text("Default remote path") },
-                target = target,
-                routes = browseRoutesForTarget(target),
-                enabled = portIsValid,
-                browseButtonTag = "onboarding-target-default-remote-path-browse-button",
-                onBrowse = {
-                    browserRequest = RemotePathBrowseRequest(
-                        title = "Default remote path",
-                        startPath = target.defaultRemotePath,
-                        target = target,
-                        routes = browseRoutesForTarget(target),
-                    )
-                },
-            )
-        }
-        SectionCard {
-            Text("Fingerprint and key install", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("Server address and Tailscale device share fingerprint group ${target.fingerprintGroupId}")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(
-                    enabled = scanTarget == null && portIsValid && target.lanHost.isNotBlank(),
-                    modifier = Modifier.testTag("onboarding-target-scan-lan-button"),
-                    onClick = {
-                        scanTarget = "LAN"
-                        scanMessage = null
-                        scanError = null
-                        pendingHostKeys = emptyList()
-                        scope.launch {
-                            runCatching {
-                                withContext(Dispatchers.IO) {
-                                    SshHostKeyScanner(context).scanAll(target.lanHost, target.port)
-                                }
-                            }.onSuccess {
-                                if (it.isEmpty()) {
-                                    scanError = "No SSH host keys were returned from ${target.lanHost}:${target.port}."
-                                } else {
-                                    pendingHostKeys = it
-                                    scanMessage = "Host key found. Review the fingerprint, then trust it to continue."
-                                }
-                            }.onFailure {
-                                scanError = it.message
-                            }
-                            scanTarget = null
-                        }
-                    },
-                ) {
-                    Icon(Icons.Outlined.Sync, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (scanTarget == "LAN") "Scanning" else "Scan server")
-                }
-                FilledTonalButton(
-                    enabled = scanTarget == null && portIsValid && !target.tailscaleHost.isNullOrBlank(),
-                    modifier = Modifier.testTag("onboarding-target-scan-tailscale-button"),
-                    onClick = {
-                        val host = target.tailscaleHost ?: return@FilledTonalButton
-                        scanTarget = "Tailscale"
-                        scanMessage = null
-                        scanError = null
-                        pendingHostKeys = emptyList()
-                        scope.launch {
-                            runCatching {
-                                withContext(Dispatchers.IO) {
-                                    require(state.tailscale.isConfigured && state.tailscale.stateSecretAlias != null) {
-                                        "Configure Tailscale before scanning a Tailscale device."
-                                    }
-                                    TailscaleManager(context, secretStore).withRestoredState(state.tailscale.stateSecretAlias) { stateDir ->
-                                        SshHostKeyScanner(context).scanAllOverTailscale(
-                                            hostname = host,
-                                            port = target.port,
-                                            user = target.user,
-                                            tailscaleStateDir = stateDir,
-                                            tailscaleNodeName = state.tailscale.nodeName,
-                                        )
-                                    }
-                                }
-                            }.onSuccess {
-                                if (it.isEmpty()) {
-                                    scanError = "No SSH host keys were returned from $host:${target.port}."
-                                } else {
-                                    pendingHostKeys = it
-                                    scanMessage = "Host key found over Tailscale. Review the fingerprint, then trust it to continue."
-                                }
-                            }.onFailure {
-                                scanError = it.message
-                            }
-                            scanTarget = null
-                        }
-                    },
-                ) {
-                    Icon(Icons.Outlined.Sync, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (scanTarget == "Tailscale") "Scanning" else "Scan Tailscale")
-                }
-            }
-            if (pendingHostKeys.isNotEmpty()) {
-                SelectableBlock(
-                    pendingHostKeys.joinToString("\n\n") { scanned ->
-                        "${scanned.hostname}:${scanned.port}\n${scanned.algorithm}\n${scanned.fingerprint}"
-                    },
-                )
-                Button(
-                    modifier = Modifier.testTag("onboarding-target-trust-scanned-key-button"),
-                    onClick = {
-                        val trusted = pendingHostKeys.map { scanned ->
-                            com.ttv20.rsyncbackup.model.TrustedHostFingerprint(
-                                id = UUID.randomUUID().toString(),
-                                targetId = target.fingerprintGroupId,
-                                hostnames = listOf(scanned.hostname),
-                                port = scanned.port,
-                                algorithm = scanned.algorithm,
-                                fingerprint = scanned.fingerprint,
-                                publicKey = scanned.publicKey,
-                                confirmedAt = Instant.now().toString(),
-                            )
-                        }
-                        repository.update { appState ->
-                            appState.copy(
-                                targets = appState.targets.filterNot { it.id == target.id } + target,
-                                trustedHostFingerprints = appState.trustedHostFingerprints
-                                    .filterNot { existing ->
-                                        pendingHostKeys.any { scanned ->
-                                            existing.targetId == target.fingerprintGroupId &&
-                                                existing.hostnames.contains(scanned.hostname) &&
-                                                existing.port == scanned.port &&
-                                                existing.algorithm == scanned.algorithm
-                                        }
-                                    } + trusted,
-                            )
-                        }
-                        pendingHostKeys = emptyList()
-                        scanMessage = "Host key trusted. This target now has a saved fingerprint."
-                        scanError = null
-                    },
-                ) {
-                    Icon(Icons.Outlined.CheckCircle, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Trust scanned key")
-                }
-            }
-            if (trustedEntries.isNotEmpty()) {
-                Text("Trusted host keys", style = MaterialTheme.typography.labelLarge)
-                trustedEntries.forEach { entry ->
-                    SelectableBlock("${entry.hostnames.joinToString()}:${entry.port}\n${entry.algorithm}\n${entry.fingerprint}")
-                }
-            }
-            scanMessage?.let {
-                FeedbackBanner("Fingerprint step updated", it, MetricTone.Success)
-            }
-            scanError?.let {
-                FeedbackBanner("Host key scan failed", it, MetricTone.Destructive)
-            }
-        }
-        SectionCard {
-            Text("Install public key", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(
-                value = setupPassword,
-                onValueChange = { setupPassword = it },
-                label = { Text("SSH password") },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("onboarding-target-setup-password-field"),
-            )
-            setupPrerequisiteMessage?.let {
-                FeedbackBanner("Public key setup needs attention", it, MetricTone.Warning)
-            }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    enabled = setupTarget == null && portIsValid && setupPassword.isNotBlank() && target.lanHost.isNotBlank(),
-                    modifier = Modifier.testTag("onboarding-target-install-over-lan-button"),
-                    onClick = {
-                        val publicKey = state.sshKeySettings.publicKey
-                        if (publicKey == null) {
-                            setupError = "Generate or store an SSH public key before setup."
-                            return@Button
-                        }
-                        if (trustedEntries.isEmpty()) {
-                            setupError = "Scan and trust this target host key before setup."
-                            return@Button
-                        }
-                        val password = setupPassword
-                        setupTarget = "LAN"
-                        setupMessage = null
-                        setupError = null
-                        scope.launch {
-                            runCatching {
-                                withContext(Dispatchers.IO) {
-                                    SshPasswordSetupClient().installPublicKey(
-                                        target = target,
-                                        trustedHostFingerprints = state.trustedHostFingerprints,
-                                        publicKey = publicKey,
-                                        password = password,
-                                        workDir = context.cacheDir,
-                                        hostname = target.lanHost,
-                                    )
-                                }
-                            }.onSuccess { result ->
-                                if (result.isSuccess) {
-                                    val updatedTarget = target.copy(publicKeyInstalledAt = Instant.now().toString())
-                                    onTargetChange(updatedTarget)
-                                    repository.upsertTarget(updatedTarget)
-                                    setupPassword = ""
-                                    setupMessage = "Public key installed over server address"
-                                } else {
-                                    setupError = result.output.ifBlank { "Password setup failed with exit ${result.exitStatus}" }
-                                }
-                            }.onFailure {
-                                setupError = it.message
-                            }
-                            setupTarget = null
-                        }
-                    },
-                ) {
-                    Icon(Icons.Outlined.UploadFile, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (setupTarget == "LAN") "Installing" else "Install over server address")
-                }
-                OutlinedButton(
-                    enabled = setupTarget == null && portIsValid && setupPassword.isNotBlank() && !target.tailscaleHost.isNullOrBlank(),
-                    modifier = Modifier.testTag("onboarding-target-install-over-tailscale-button"),
-                    onClick = {
-                        val publicKey = state.sshKeySettings.publicKey
-                        if (publicKey == null) {
-                            setupError = "Generate or store an SSH public key before setup."
-                            return@OutlinedButton
-                        }
-                        if (trustedEntries.isEmpty()) {
-                            setupError = "Scan and trust this target host key before setup."
-                            return@OutlinedButton
-                        }
-                        if (!state.tailscale.isConfigured || state.tailscale.stateSecretAlias == null) {
-                            setupError = "Configure Tailscale before installing over Tailscale."
-                            return@OutlinedButton
-                        }
-                        val host = target.tailscaleHost ?: return@OutlinedButton
-                        val password = setupPassword
-                        setupTarget = "Tailscale"
-                        setupMessage = null
-                        setupError = null
-                        scope.launch {
-                            runCatching {
-                                withContext(Dispatchers.IO) {
-                                    TailscaleManager(context, secretStore).withRestoredState(state.tailscale.stateSecretAlias) { stateDir ->
-                                        val nativeInstall = NativeBinaryManager(context).ensureInstalled()
-                                        require(nativeInstall.isComplete) {
-                                            "Missing native binaries: ${nativeInstall.missing.joinToString()}"
-                                        }
-                                        SshPasswordSetupClient().installPublicKeyWithNativeSsh(
-                                            target = target,
-                                            trustedHostFingerprints = state.trustedHostFingerprints,
-                                            publicKey = publicKey,
-                                            password = password,
-                                            workDir = context.cacheDir,
-                                            filesDir = context.filesDir,
-                                            tsnetHelperPath = nativeInstall.paths.tsnetHelper,
-                                            tailscaleStateDir = stateDir,
-                                            tailscaleNodeName = state.tailscale.nodeName,
-                                            hostname = host,
-                                        )
-                                    }
-                                }
-                            }.onSuccess { result ->
-                                if (result.isSuccess) {
-                                    val updatedTarget = target.copy(publicKeyInstalledAt = Instant.now().toString())
-                                    onTargetChange(updatedTarget)
-                                    repository.upsertTarget(updatedTarget)
-                                    setupPassword = ""
-                                    setupMessage = "Public key installed over Tailscale"
-                                } else {
-                                    setupError = result.output.ifBlank { "Password setup failed with exit ${result.exitStatus}" }
-                                }
-                            }.onFailure {
-                                setupError = it.message
-                            }
-                            setupTarget = null
-                        }
-                    },
-                ) {
-                    Icon(Icons.Outlined.UploadFile, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (setupTarget == "Tailscale") "Installing" else "Install over Tailscale")
-                }
-            }
-            setupMessage?.let {
-                FeedbackBanner("Public key installed", it, MetricTone.Success)
-            }
-            setupError?.let {
-                FeedbackBanner("Public key install failed", it, MetricTone.Destructive)
-            }
-        }
-        Button(
-            onClick = onSave,
-            enabled = portIsValid,
-            modifier = Modifier.testTag("onboarding-save-target-button"),
-        ) {
-            Icon(Icons.Outlined.Save, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Save target")
-        }
-    }
 }
 
 @Composable
 private fun OnboardingProfileStep(
     state: AppState,
     profile: BackupProfile,
+    repository: AppRepository,
     secretStore: SecretStore,
-    onProfileChange: (BackupProfile) -> Unit,
-    onSave: () -> Unit,
+    onBack: () -> Unit,
+    onBackHandlerChange: ((() -> Unit)?) -> Unit,
+    onSave: (BackupProfile) -> Unit,
 ) {
-    val selectedTarget = state.targets.firstOrNull { it.id == profile.targetId }
-    var browserRequest by remember(profile.id) { mutableStateOf<RemotePathBrowseRequest?>(null) }
-    browserRequest?.let { request ->
-        RemotePathBrowserScreen(
-            title = request.title,
-            state = state,
-            target = request.target,
-            routes = request.routes,
-            startPath = request.startPath,
-            secretStore = secretStore,
-            onPathSelected = { selectedPath ->
-                onProfileChange(profile.copy(remotePath = selectedPath))
-                browserRequest = null
-            },
-            onBack = { browserRequest = null },
-            modifier = Modifier.fillMaxSize(),
-        )
-        return
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        SectionCard {
-            Text("Profile", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(profile.name, { onProfileChange(profile.copy(name = it)) }, label = { Text("Profile name") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(profile.sourcePath, { onProfileChange(profile.copy(sourcePath = it)) }, label = { Text("Source path") }, modifier = Modifier.fillMaxWidth())
-            Selector("Selected target") {
-                state.targets.forEach { target ->
-                    FilterChip(
-                        selected = profile.targetId == target.id,
-                        onClick = {
-                            onProfileChange(
-                                profile.copy(
-                                    targetId = target.id,
-                                    remotePath = "",
-                                    targetMode = defaultTargetModeFor(target, profile.targetMode),
-                                ),
-                            )
-                        },
-                        label = { Text(target.name) },
-                    )
-                }
-            }
-            RemotePathPickerField(
-                value = profile.remotePath,
-                onValueChange = { onProfileChange(profile.copy(remotePath = it)) },
-                label = { Text("Remote path") },
-                target = selectedTarget,
-                routes = profile.targetMode.routeOrder(),
-                browseButtonTag = "onboarding-profile-remote-path-browse-button",
-                onBrowse = {
-                    val target = selectedTarget ?: return@RemotePathPickerField
-                    browserRequest = RemotePathBrowseRequest(
-                        title = "Remote path",
-                        startPath = profile.remotePath.ifBlank { "~" },
-                        target = target,
-                        routes = profile.targetMode.routeOrder(),
-                    )
-                },
-            )
-            TargetModeSelector(
-                targetMode = profile.targetMode,
-                target = selectedTarget,
-            ) {
-                onProfileChange(profile.copy(targetMode = it))
-            }
-        }
-        SectionCard {
-            Text("Safety", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            WarningRow(
-                title = "Delete remote files not present locally",
-                detail = "Only enable this for a dedicated backup directory.",
-                checked = profile.deleteEnabled,
-            ) {
-                onProfileChange(profile.copy(deleteEnabled = it))
-            }
-        }
-        Button(onClick = onSave, modifier = Modifier.testTag("onboarding-save-profile-button")) {
-            Icon(Icons.Outlined.Save, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Save profile")
-        }
-    }
+    val context = LocalContext.current
+    val scheduler = remember(context) { BackupScheduler(context) }
+    ProfileEditor(
+        state = state,
+        profile = profile,
+        onSave = { savedProfile ->
+            repository.upsertProfile(savedProfile)
+            scheduler.schedule(savedProfile)
+            onSave(savedProfile)
+        },
+        onDelete = null,
+        onAddTarget = {
+            val target = defaultTarget("New target", state.targets.size + 1)
+            repository.upsertTarget(target)
+            target
+        },
+        secretStore = secretStore,
+        onBack = onBack,
+        onBackHandlerChange = onBackHandlerChange,
+        isDraft = state.profiles.none { it.id == profile.id },
+        showEditorHeader = false,
+        modifier = Modifier.fillMaxSize(),
+    )
 }
 
 @Composable
@@ -1509,7 +1103,7 @@ private fun OnboardingReviewStep(
     onFinish: () -> Unit,
 ) {
     val context = LocalContext.current
-    val constraintSnapshot = remember(context, state.settings.selectedSsid, profileId) {
+    val constraintSnapshot = remember(context, profileId) {
         AndroidConstraintSnapshotReader(context).read()
     }
     val profile = state.profiles.firstOrNull { it.id == profileId }
@@ -1641,16 +1235,14 @@ private fun setupChecklistForProfile(
     val constraintFailures = BackupConstraintEvaluator.failures(
         profile = profile,
         snapshot = constraintSnapshot,
-        selectedSsid = state.settings.selectedSsid,
     )
     return listOf(
         SetupChecklistItem("Permissions approved", permissions.allRequiredGranted, "Grant permissions", OnboardingStep.Permissions),
-        SetupChecklistItem("SSH key exists", state.sshKeySettings.privateKeySecretAlias != null, "Set up SSH access", OnboardingStep.SshAccess),
         SetupChecklistItem("Target fingerprint trusted", trusted, "Trust fingerprint", OnboardingStep.NewTarget),
         SetupChecklistItem(
-            "Public key installed on target",
-            target?.publicKeyInstalledAt != null,
-            "Install public key",
+            "Target connected",
+            target?.publicKeyInstalledAt != null || target?.keyOnlyLoginVerifiedAt != null,
+            "Connect target",
             OnboardingStep.NewTarget,
         ),
         SetupChecklistItem(
@@ -1672,21 +1264,6 @@ private fun setupChecklistForProfile(
 
 private fun firstMissingSetupStep(checklist: List<SetupChecklistItem>): OnboardingStep =
     checklist.firstOrNull { !it.complete }?.step ?: OnboardingStep.Review
-
-private fun publicKeySetupPrerequisiteMessage(
-    publicKeyInstalled: Boolean,
-    setupPassword: String,
-    publicKey: String?,
-    hasTrustedHostKey: Boolean,
-): String? {
-    if (publicKeyInstalled) return null
-    return when {
-        setupPassword.isBlank() -> "Enter the one-time SSH password to install the public key."
-        publicKey == null -> "Generate or store an SSH public key before setup."
-        !hasTrustedHostKey -> "Scan and trust this target host key before setup."
-        else -> null
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1859,7 +1436,7 @@ private fun DashboardScreen(
     onStartOnboarding: (OnboardingStep) -> Unit,
 ) {
     val context = LocalContext.current
-    val constraintSnapshot = remember(context, state.settings.selectedSsid, state.profiles) {
+    val constraintSnapshot = remember(context, state.profiles) {
         AndroidConstraintSnapshotReader(context).read()
     }
     LazyColumn(
@@ -2346,6 +1923,19 @@ private fun scheduleLabel(schedule: BackupSchedule): String =
         ScheduleType.BEST_EFFORT_DAILY -> "Best effort, ${schedule.timeLocal}"
     }
 
+private fun knownWifiSsidOptions(
+    deviceSsids: List<String>,
+    currentSelection: String?,
+): List<String> =
+    (deviceSsids + listOfNotNull(currentSelection))
+        .mapNotNull { it.cleanSsidLabel() }
+        .distinctBy { it.lowercase(Locale.US) }
+
+private fun String.cleanSsidLabel(): String? =
+    trim()
+        .trim('"')
+        .takeIf { it.isNotBlank() }
+
 @Composable
 private fun ProfilesScreen(
     state: AppState,
@@ -2503,15 +2093,17 @@ private fun ProfileEditor(
     state: AppState,
     profile: BackupProfile,
     onSave: (BackupProfile) -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
     onAddTarget: () -> TargetRecord,
     secretStore: SecretStore,
     onBack: (() -> Unit)? = null,
     onBackHandlerChange: ((() -> Unit)?) -> Unit,
     isDraft: Boolean,
     deleteLabel: String = "Delete",
+    showEditorHeader: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     var editing by remember(profile.id, profile) { mutableStateOf(profile) }
     var sourcePickerError by remember(profile.id) { mutableStateOf<String?>(null) }
     var pendingSaveWarnings by remember(profile.id) {
@@ -2521,6 +2113,12 @@ private fun ProfileEditor(
     var browserRequest by remember(profile.id) { mutableStateOf<RemotePathBrowseRequest?>(null) }
     val selectedTarget = state.targets.firstOrNull { it.id == editing.targetId }
     val issues = ProfileValidator.validate(editing, state)
+    val knownWifiSsids = remember(context, editing.constraints.selectedSsid) {
+        knownWifiSsidOptions(
+            deviceSsids = AndroidWifiNetworkReader(context).knownSsids(),
+            currentSelection = editing.constraints.selectedSsid,
+        )
+    }
     val canSave = issues.none { it.severity == Severity.ERROR }
     val hasUnsavedChanges = isDraft || editing != profile
     val saveProfile = {
@@ -2600,17 +2198,19 @@ private fun ProfileEditor(
         modifier = modifier
             .fillMaxHeight(),
     ) {
-        EditorHeader(
-            title = if (isDraft) "New Profile" else "Profile Edit",
-            onBack = { requestBackState.value.invoke() },
-            backLabel = "Back",
-            onSave = saveProfile,
-            saveEnabled = canSave,
-            saveButtonTag = "profile-save-button",
-            onSecondaryAction = onDelete,
-            secondaryActionLabel = deleteLabel,
-            secondaryActionIcon = Icons.Outlined.Delete,
-        )
+        if (showEditorHeader) {
+            EditorHeader(
+                title = if (isDraft) "New Profile" else "Profile Edit",
+                onBack = { requestBackState.value.invoke() },
+                backLabel = "Back",
+                onSave = saveProfile,
+                saveEnabled = canSave,
+                saveButtonTag = "profile-save-button",
+                onSecondaryAction = onDelete,
+                secondaryActionLabel = deleteLabel.takeIf { onDelete != null },
+                secondaryActionIcon = Icons.Outlined.Delete.takeIf { onDelete != null },
+            )
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -2643,6 +2243,11 @@ private fun ProfileEditor(
             }
             SectionCard {
                 Text("Source", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Choose the folder on this phone that should be backed up.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 OutlinedTextField(editing.name, { editing = editing.copy(name = it) }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
@@ -2666,6 +2271,11 @@ private fun ProfileEditor(
             }
             SectionCard {
                 Text("Target", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Choose the server target and the remote folder where this backup will be stored.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Selector {
                     state.targets.forEach { target ->
                         FilterChip(
@@ -2716,7 +2326,18 @@ private fun ProfileEditor(
             }
             SectionCard {
                 Text("Schedule", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Leave disabled for manual backups, or set a daily time for automatic runs.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 ScheduleEditor(editing.schedule) { editing = editing.copy(schedule = it) }
+            }
+            SectionCard {
+                Text("Constraints", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                PrimaryConstraintEditor(editing.constraints) {
+                    editing = editing.copy(constraints = it)
+                }
             }
             AdvancedSection {
                 TargetModeSelector(
@@ -2725,7 +2346,12 @@ private fun ProfileEditor(
                 ) {
                     editing = editing.copy(targetMode = it)
                 }
-                ConstraintEditor(editing.constraints) { editing = editing.copy(constraints = it) }
+                AdvancedConstraintEditor(
+                    constraints = editing.constraints,
+                    knownWifiSsids = knownWifiSsids,
+                ) {
+                    editing = editing.copy(constraints = it)
+                }
                 WarningRow("Delete remote files not present locally", "Deletes target files that are not present in the source.", editing.deleteEnabled) {
                     editing = editing.copy(deleteEnabled = it)
                 }
@@ -2743,6 +2369,17 @@ private fun ProfileEditor(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 CommandPreview(state, editing)
+            }
+            if (!showEditorHeader) {
+                Button(
+                    onClick = saveProfile,
+                    enabled = canSave,
+                    modifier = Modifier.testTag("profile-save-button"),
+                ) {
+                    Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Save profile")
+                }
             }
         }
     }
@@ -2876,6 +2513,7 @@ private fun TargetEditor(
     onBackHandlerChange: ((() -> Unit)?) -> Unit,
     isDraft: Boolean,
     cancelLabel: String = "Back",
+    showEditorHeader: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -2945,7 +2583,7 @@ private fun TargetEditor(
                 trustedHostFingerprints = trustedHostFingerprints,
             )
         }
-        onBack?.invoke()
+        onSave(connectedTarget)
     }
 
     fun connectAndSave() {
@@ -3094,15 +2732,17 @@ private fun TargetEditor(
         modifier = modifier
             .fillMaxHeight(),
     ) {
-        EditorHeader(
-            title = if (isDraft) "New Target" else "Target Edit",
-            onBack = { requestBackState.value.invoke() },
-            backLabel = cancelLabel,
-            onSave = { connectAndSave() },
-            saveEnabled = canConnect,
-            saveButtonTag = "target-save-button",
-            saveLabel = if (connectBusy) "Connecting" else "Connect",
-        )
+        if (showEditorHeader) {
+            EditorHeader(
+                title = if (isDraft) "New Target" else "Target Edit",
+                onBack = { requestBackState.value.invoke() },
+                backLabel = cancelLabel,
+                onSave = { connectAndSave() },
+                saveEnabled = canConnect,
+                saveButtonTag = "target-save-button",
+                saveLabel = if (connectBusy) "Connecting" else "Connect",
+            )
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -3113,6 +2753,11 @@ private fun TargetEditor(
         ) {
             SectionCard {
                 Text("Target", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Use Server address for a public IP or DNS name, Tailscale device for a private Tailscale-only server, or both.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 OutlinedTextField(
                     editing.user,
                     { editing = editing.copy(user = it) },
@@ -3141,6 +2786,11 @@ private fun TargetEditor(
                     fieldModifier = Modifier
                         .fillMaxWidth()
                         .testTag("target-tailscale-host-field"),
+                )
+                Text(
+                    "Connect verifies the server and installs the app SSH key if password setup is needed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (selectedSshKeySettings.privateKeySecretAlias == null || selectedSshKeySettings.publicKey == null) {
                     FeedbackBanner("SSH key unavailable", "Open Settings and configure an SSH key before connecting.", MetricTone.Warning)
@@ -3243,6 +2893,17 @@ private fun TargetEditor(
                     }
                     customKeyMessage?.let { FeedbackBanner("SSH key updated", it, MetricTone.Success) }
                     customKeyError?.let { FeedbackBanner("SSH key import failed", it, MetricTone.Destructive) }
+                }
+            }
+            if (!showEditorHeader) {
+                Button(
+                    onClick = { connectAndSave() },
+                    enabled = canConnect,
+                    modifier = Modifier.testTag("target-save-button"),
+                ) {
+                    Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (connectBusy) "Connecting" else "Connect")
                 }
             }
         }
@@ -3567,6 +3228,11 @@ private fun TailscaleScreen(state: AppState, repository: AppRepository, secretSt
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         SectionHeader("Tailscale Connection")
+        Text(
+            "Optional. Use Tailscale when the server has no public address or you prefer a private mesh connection.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         SectionCard {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 EntityIcon(Icons.Outlined.Cloud, connectionTone)
@@ -3836,27 +3502,54 @@ private fun PermissionSettingsSection(
     ) {
         onRefreshPermissions()
     }
+    val wifiPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        onRefreshPermissions()
+    }
     SectionCard {
         Text("Permission setup/status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(if (permissions.allRequiredGranted) "All required permissions approved" else "Approve every required item")
-        PermissionRow("All files access", permissions.allFilesAccess) {
+        Text("Required", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        PermissionRow(
+            label = "All files access",
+            detail = "Needed to read the folders you choose for backup.",
+            granted = permissions.allFilesAccess,
+        ) {
             context.startActivity(PermissionIntents.allFilesAccess(context))
         }
-        PermissionRow("Battery optimization exemption", permissions.batteryOptimizationExempt) {
+        PermissionRow(
+            label = "Battery optimization exemption",
+            detail = "Keeps scheduled backups from being stopped in the background.",
+            granted = permissions.batteryOptimizationExempt,
+        ) {
             context.startActivity(PermissionIntents.batteryOptimization(context))
         }
-        PermissionRow("Exact alarm access", permissions.exactAlarmAccess) {
+        PermissionRow(
+            label = "Exact alarm access",
+            detail = "Lets scheduled backups start at the configured time.",
+            granted = permissions.exactAlarmAccess,
+        ) {
             context.startActivity(PermissionIntents.exactAlarm(context))
         }
-        PermissionRow("Wi-Fi/SSID access", permissions.wifiStateAccess) {
-            context.startActivity(PermissionIntents.appDetails(context))
-        }
-        PermissionRow("Notifications", permissions.notifications) {
+        PermissionRow(
+            label = "Notifications",
+            detail = "Shows backup progress, completion, and failures.",
+            granted = permissions.notifications,
+        ) {
             if (Build.VERSION.SDK_INT >= 33) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else {
                 onRefreshPermissions()
             }
+        }
+        Text("Optional", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        PermissionRow(
+            label = "Wi-Fi/SSID access",
+            detail = "Only needed if you want backups to run only on Wi-Fi or only on a specific network.",
+            granted = permissions.wifiStateAccess,
+        ) {
+            wifiPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         OutlinedButton(onClick = onRefreshPermissions) {
             Icon(Icons.Outlined.Sync, contentDescription = null)
@@ -4129,7 +3822,6 @@ private fun SettingsScreen(
                 repository.update { it.withUpdatedSettings(updated) }
             }
             OutlinedTextField(settings.phoneHostname, { settings = settings.copy(phoneHostname = it) }, label = { Text("Phone hostname") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(settings.selectedSsid.orEmpty(), { settings = settings.copy(selectedSsid = it.ifBlank { null }) }, label = { Text("Selected SSID") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(settings.logRetentionLimit.toString(), { settings = settings.copy(logRetentionLimit = it.toIntOrNull() ?: settings.logRetentionLimit) }, label = { Text("Log retention") }, modifier = Modifier.fillMaxWidth())
             Button(onClick = { repository.update { it.withUpdatedSettings(settings) } }) {
                 Icon(Icons.Outlined.Save, contentDescription = null)
@@ -4805,21 +4497,94 @@ private fun ScheduleEditor(schedule: BackupSchedule, onChange: (BackupSchedule) 
 }
 
 @Composable
-private fun ConstraintEditor(constraints: ConstraintSettings, onChange: (ConstraintSettings) -> Unit) {
-    SectionCard {
-        Text("Constraints", style = MaterialTheme.typography.titleMedium)
-        ToggleRow("Wi-Fi only", constraints.wifiOnly) { onChange(constraints.copy(wifiOnly = it)) }
-        ToggleRow("Unmetered only", constraints.unmeteredOnly) { onChange(constraints.copy(unmeteredOnly = it)) }
-        ToggleRow("Charging only", constraints.chargingOnly) { onChange(constraints.copy(chargingOnly = it)) }
-        ToggleRow(
-            label = "Battery not low",
-            checked = constraints.batteryNotLow,
-            switchTag = "profile-constraint-battery-not-low-switch",
+private fun PrimaryConstraintEditor(constraints: ConstraintSettings, onChange: (ConstraintSettings) -> Unit) {
+    ToggleRow("Wi-Fi only", constraints.wifiOnly) { onChange(constraints.copy(wifiOnly = it)) }
+    ToggleRow("Charging only", constraints.chargingOnly) { onChange(constraints.copy(chargingOnly = it)) }
+}
+
+@Composable
+private fun AdvancedConstraintEditor(
+    constraints: ConstraintSettings,
+    knownWifiSsids: List<String>,
+    onChange: (ConstraintSettings) -> Unit,
+) {
+    ToggleRow("Unmetered only", constraints.unmeteredOnly) { onChange(constraints.copy(unmeteredOnly = it)) }
+    ToggleRow(
+        label = "Battery not low",
+        checked = constraints.batteryNotLow,
+        switchTag = "profile-constraint-battery-not-low-switch",
+    ) {
+        onChange(constraints.copy(batteryNotLow = it))
+    }
+    ToggleRow("Selected WiFi network only", constraints.selectedSsidOnly) {
+        onChange(
+            constraints.copy(
+                selectedSsidOnly = it,
+                selectedSsid = if (it) {
+                    constraints.selectedSsid ?: knownWifiSsids.firstOrNull()
+                } else {
+                    constraints.selectedSsid
+                },
+            ),
+        )
+    }
+    if (constraints.selectedSsidOnly) {
+        WifiSsidSelector(
+            selectedSsid = constraints.selectedSsid,
+            knownWifiSsids = knownWifiSsids,
         ) {
-            onChange(constraints.copy(batteryNotLow = it))
+            onChange(constraints.copy(selectedSsid = it))
         }
-        ToggleRow("Selected SSID only", constraints.selectedSsidOnly) { onChange(constraints.copy(selectedSsidOnly = it)) }
-        ToggleRow("Manual override allowed", constraints.manualOverrideAllowed) { onChange(constraints.copy(manualOverrideAllowed = it)) }
+    }
+    ToggleRow("Manual override allowed", constraints.manualOverrideAllowed) {
+        onChange(constraints.copy(manualOverrideAllowed = it))
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WifiSsidSelector(
+    selectedSsid: String?,
+    knownWifiSsids: List<String>,
+    onChange: (String?) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(knownWifiSsids.isNotEmpty()) }
+    LaunchedEffect(knownWifiSsids) {
+        expanded = knownWifiSsids.isNotEmpty()
+    }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded && knownWifiSsids.isNotEmpty(),
+        onExpandedChange = { expanded = !expanded },
+    ) {
+        OutlinedTextField(
+            value = selectedSsid.orEmpty(),
+            onValueChange = {
+                onChange(it.ifBlank { null })
+                expanded = knownWifiSsids.isNotEmpty()
+            },
+            label = { Text("WiFi network") },
+            singleLine = true,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth()
+                .testTag("profile-wifi-network-field"),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && knownWifiSsids.isNotEmpty(),
+            onDismissRequest = { expanded = false },
+        ) {
+            knownWifiSsids.forEach { ssid ->
+                DropdownMenuItem(
+                    text = { Text(ssid, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    onClick = {
+                        onChange(ssid)
+                        expanded = false
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -4872,11 +4637,14 @@ private fun WarningRow(
 }
 
 @Composable
-private fun PermissionRow(label: String, granted: Boolean, onOpen: () -> Unit) {
+private fun PermissionRow(label: String, detail: String, granted: Boolean, onOpen: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         StatusIcon(if (granted) RunStatus.SUCCESS else RunStatus.FAILED)
         Spacer(Modifier.width(8.dp))
-        Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+        Column(Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.SemiBold)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         OutlinedButton(onClick = onOpen) {
             Text(if (granted) "Open" else "Grant")
         }

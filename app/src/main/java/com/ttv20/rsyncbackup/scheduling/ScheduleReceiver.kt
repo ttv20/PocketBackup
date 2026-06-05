@@ -37,7 +37,6 @@ class ScheduleReceiver : BroadcastReceiver() {
         val failures = BackupConstraintEvaluator.failures(
             profile = profile,
             snapshot = AndroidConstraintSnapshotReader(context).read(),
-            selectedSsid = app.repository.state.value.settings.selectedSsid,
         )
         if (failures.isNotEmpty()) {
             app.repository.recordConstraintBlockedBackup(profile, failures, BackupRunTrigger.AUTOMATIC)

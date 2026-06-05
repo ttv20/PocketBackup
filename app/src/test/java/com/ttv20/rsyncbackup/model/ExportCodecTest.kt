@@ -65,6 +65,54 @@ class ExportCodecTest {
         assertNull(imported.tailscale.stateSecretAlias)
     }
 
+    @Test
+    fun importMigratesLegacyGlobalSelectedSsidToProfileConstraint() {
+        val legacyJson = """
+            {
+              "schemaVersion": 1,
+              "exportedAt": "2026-06-03T00:00:00Z",
+              "settings": {
+                "phoneHostname": "android-phone",
+                "logRetentionLimit": 20,
+                "selectedSsid": "Home WiFi"
+              },
+              "tailscale": {
+                "isConfigured": false,
+                "nodeName": "android-rsync"
+              },
+              "targets": [
+                {
+                  "id": "target-home",
+                  "name": "Home backup target",
+                  "user": "ttv20",
+                  "lanHost": "192.168.3.200",
+                  "port": 22
+                }
+              ],
+              "profiles": [
+                {
+                  "id": "profile-phone",
+                  "name": "Phone shared storage",
+                  "sourcePath": "/storage/emulated/0",
+                  "targetId": "target-home",
+                  "remotePath": "/mnt/backup/phone",
+                  "targetMode": "LAN_ONLY",
+                  "schedule": {},
+                  "constraints": {
+                    "selectedSsidOnly": true
+                  },
+                  "excludes": "cache/"
+                }
+              ],
+              "trustedHostFingerprints": []
+            }
+        """.trimIndent()
+
+        val document = ExportCodec.decode(legacyJson)
+
+        assertEquals("Home WiFi", document.profiles.single().constraints.selectedSsid)
+    }
+
     private fun configuredState(): AppState {
         val target = TargetRecord(
             id = "target-home",

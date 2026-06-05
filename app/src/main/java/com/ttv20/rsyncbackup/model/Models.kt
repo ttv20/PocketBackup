@@ -25,7 +25,6 @@ data class AppState(
 data class GlobalSettings(
     val phoneHostname: String = DEFAULT_PHONE_HOSTNAME,
     val logRetentionLimit: Int = 20,
-    val selectedSsid: String? = null,
     val exactAlarmFallbackEnabled: Boolean = true,
     val allFilesAccessRequested: Boolean = true,
     val batteryOptimizationExemptionRequested: Boolean = true,
@@ -196,6 +195,7 @@ data class ConstraintSettings(
     val chargingOnly: Boolean = false,
     val batteryNotLow: Boolean = true,
     val selectedSsidOnly: Boolean = false,
+    val selectedSsid: String? = null,
     val manualOverrideAllowed: Boolean = true,
 )
 

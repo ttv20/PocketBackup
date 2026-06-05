@@ -58,7 +58,34 @@ Builds:
       /home/vagrant/gradlew-fdroid/gradlew-fdroid -p . --no-daemon -Ppocketsync.versionName=$$VERSION$$ -Ppocketsync.versionCode=$$VERCODE$$ assembleFdroidRelease
     output: app/build/outputs/apk/fdroidRelease/app-fdroidRelease-unsigned.apk
 
+  - versionName: "0.95"
+    versionCode: 8
+    commit: v0.95
+    subdir: .
+    timeout: 7200
+    ndk: 29.0.14206865
+    sudo: |-
+      mkdir -p /data
+      chown vagrant:vagrant /data
+    scandelete:
+      - app/src/sideload
+    prebuild: |-
+      ./scripts/fdroid-scan-source.sh
+    build: |-
+      export ANDROID_HOME=$$SDK$$
+      export ANDROID_SDK_ROOT=$$SDK$$
+      export ANDROID_NDK_HOME=$$NDK$$
+      export ANDROID_NDK_ROOT=$$NDK$$
+      export NDK=$$NDK$$
+      export POCKETSYNC_VERSION_NAME=$$VERSION$$
+      export POCKETSYNC_VERSION_CODE=$$VERCODE$$
+      export FDROID_NATIVE_SOURCE_REFS="$(./scripts/fdroid-native-source-refs.sh)"
+      ./scripts/build-fdroid-native-termux.sh --termux-mode host
+      export GO_ANDROID_IMAGE="host-$(cd native/tsnet-helper && go env GOVERSION)"
+      /home/vagrant/gradlew-fdroid/gradlew-fdroid -p . --no-daemon -Ppocketsync.versionName=$$VERSION$$ -Ppocketsync.versionCode=$$VERCODE$$ assembleFdroidRelease
+    output: app/build/outputs/apk/fdroidRelease/app-fdroidRelease-unsigned.apk
+
 AutoUpdateMode: None
 UpdateCheckMode: None
-CurrentVersion: "0.90"
-CurrentVersionCode: 7
+CurrentVersion: "0.95"
+CurrentVersionCode: 8

@@ -112,7 +112,7 @@ class MainActivitySmokeTest {
         composeRule.onNodeWithText("All files access").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Battery optimization exemption").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Exact alarm access").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Wi-Fi/SSID access").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("WiFi network access").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -125,6 +125,11 @@ class MainActivitySmokeTest {
         assertVisibleText("profile-editor-scroll", "Remote path")
         assertVisibleText("profile-editor-scroll", "Add target")
         composeRule.onAllNodesWithText("Remote safety").assertCountEquals(0)
+        assertVisibleText("profile-editor-scroll", "Constraints")
+        assertVisibleText("profile-editor-scroll", "Wi-Fi only")
+        assertVisibleText("profile-editor-scroll", "Charging only")
+        assertVisibleText("profile-editor-scroll", "Advanced settings")
+        composeRule.onNodeWithText("Advanced settings").performClick()
         assertVisibleText("profile-editor-scroll", "Delete remote files not present locally")
         assertVisibleText("profile-editor-scroll", "Advanced rsync args")
         assertVisibleText("profile-editor-scroll", "Command preview")
@@ -165,7 +170,6 @@ class MainActivitySmokeTest {
         openScreen("Settings")
         assertVisibleText("settings-scroll", "Settings and import/export")
         assertVisibleText("settings-scroll", "Phone hostname")
-        assertVisibleText("settings-scroll", "Selected SSID")
         assertVisibleText("settings-scroll", "Export")
         assertVisibleText("settings-scroll", "Import")
         assertVisibleText("settings-scroll", "Configuration JSON")

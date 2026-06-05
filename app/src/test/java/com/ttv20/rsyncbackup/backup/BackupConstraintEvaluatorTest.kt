@@ -12,7 +12,6 @@ class BackupConstraintEvaluatorTest {
         val failures = BackupConstraintEvaluator.failures(
             profile = profile(ConstraintSettings(batteryNotLow = false)),
             snapshot = ConstraintSnapshot(isBatteryLow = true),
-            selectedSsid = null,
         )
 
         assertTrue(failures.isEmpty())
@@ -28,6 +27,7 @@ class BackupConstraintEvaluatorTest {
                     chargingOnly = true,
                     batteryNotLow = true,
                     selectedSsidOnly = true,
+                    selectedSsid = "Home",
                 ),
             ),
             snapshot = ConstraintSnapshot(
@@ -37,7 +37,6 @@ class BackupConstraintEvaluatorTest {
                 isBatteryLow = true,
                 ssid = "Guest",
             ),
-            selectedSsid = "Home",
         )
 
         assertEquals(
@@ -49,9 +48,8 @@ class BackupConstraintEvaluatorTest {
     @Test
     fun normalizesQuotedWifiSsid() {
         val failures = BackupConstraintEvaluator.failures(
-            profile = profile(ConstraintSettings(selectedSsidOnly = true)),
+            profile = profile(ConstraintSettings(selectedSsidOnly = true, selectedSsid = "Home")),
             snapshot = ConstraintSnapshot(ssid = "\"Home\""),
-            selectedSsid = "Home",
         )
 
         assertTrue(failures.isEmpty())

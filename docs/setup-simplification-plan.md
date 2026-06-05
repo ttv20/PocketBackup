@@ -6,6 +6,25 @@ Make the normal setup path smaller and more direct for profiles, targets,
 Tailscale, and selected settings. Advanced controls remain available but should
 not be the default path.
 
+## Onboarding
+
+- Explain each setup step with short helper text.
+- Keep the flow to Welcome, Permissions, Tailscale, Target, Profile, and Review.
+- Remove the standalone onboarding SSH Access page; the app-generated SSH key is
+  infrastructure, not a user setup step.
+- Reuse the normal add/edit Target and Profile form content inside the
+  onboarding frame so the guide keeps its own header and navigation while the
+  fields cannot drift from the main screens.
+
+## Permissions
+
+- Split permissions into required and optional groups.
+- Add one-line explanations under each permission.
+- Required permissions are all files access, battery optimization exemption,
+  exact alarm access, and notifications.
+- Wi-Fi/SSID access is optional and only needed when backups should run only on
+  Wi-Fi or only on a specific network.
+
 ## Target Setup
 
 - Remove built-in demo target/profile data from first launch.

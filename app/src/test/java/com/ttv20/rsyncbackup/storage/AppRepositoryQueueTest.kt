@@ -23,6 +23,19 @@ class AppRepositoryQueueTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun freshRepositoryStartsWithoutDefaultProfileOrTarget() {
+        val repository = AppRepository(
+            dataFile = temporaryFolder.newFile(),
+            defaultExcludes = "cache/\n",
+        )
+
+        repository.loadBlocking()
+
+        assertEquals(emptyList<TargetRecord>(), repository.state.value.targets)
+        assertEquals(emptyList<BackupProfile>(), repository.state.value.profiles)
+    }
+
+    @Test
     fun queueRunsOneProfileAtATime() {
         val repository = repository()
         val second = BackupProfile(

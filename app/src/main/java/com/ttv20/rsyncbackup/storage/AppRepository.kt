@@ -33,7 +33,7 @@ class AppRepository(
     fun loadBlocking() {
         val loaded = if (dataFile.exists()) {
             runCatching {
-                ExportCodec.json.decodeFromString(AppState.serializer(), dataFile.readText())
+                ExportCodec.decodeAppState(dataFile.readText())
             }.getOrElse {
                 InitialData.appState(defaultExcludes)
             }

@@ -19,7 +19,6 @@ object BackupConstraintEvaluator {
     fun failures(
         profile: BackupProfile,
         snapshot: ConstraintSnapshot,
-        selectedSsid: String?,
     ): List<ConstraintFailure> {
         val constraints = profile.constraints
         val failures = mutableListOf<ConstraintFailure>()
@@ -37,14 +36,14 @@ object BackupConstraintEvaluator {
             failures += ConstraintFailure("battery_low", "Battery is low")
         }
         if (constraints.selectedSsidOnly) {
-            val expected = selectedSsid?.trim().orEmpty()
+            val expected = constraints.selectedSsid?.trim().orEmpty()
             val actual = snapshot.ssid?.trim().orEmpty()
             if (expected.isBlank()) {
-                failures += ConstraintFailure("ssid_not_configured", "Selected SSID is not configured")
+                failures += ConstraintFailure("ssid_not_configured", "Selected WiFi network is not configured")
             } else if (actual.isBlank()) {
-                failures += ConstraintFailure("ssid_unavailable", "Current SSID is unavailable")
+                failures += ConstraintFailure("ssid_unavailable", "Current WiFi network is unavailable")
             } else if (actual.trim('"') != expected.trim('"')) {
-                failures += ConstraintFailure("ssid_mismatch", "Current SSID does not match selected SSID")
+                failures += ConstraintFailure("ssid_mismatch", "Current WiFi network does not match selected WiFi network")
             }
         }
 

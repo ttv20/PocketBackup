@@ -78,6 +78,8 @@ class UserDrivenSetupSmokeTest {
         replaceText("profile-source-path-field", sourceDir.absolutePath)
         replaceText("profile-remote-path-field", remotePath)
         clickTag("target-mode-lan_only")
+        composeRule.onNodeWithText("Advanced settings").performClick()
+        composeRule.waitForIdle()
         clickTag("profile-constraint-battery-not-low-switch")
         clickTag("profile-save-button")
         composeRule.waitUntil(10_000) {

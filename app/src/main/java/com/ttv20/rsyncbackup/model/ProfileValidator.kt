@@ -60,10 +60,10 @@ object ProfileValidator {
                 )
             }
         }
-        if (profile.constraints.selectedSsidOnly && state.settings.selectedSsid.isNullOrBlank()) {
+        if (profile.constraints.selectedSsidOnly && profile.constraints.selectedSsid.isNullOrBlank()) {
             issues += ValidationIssue(
                 "ssid_missing",
-                "Selected SSID constraint needs a configured SSID",
+                "Selected WiFi network constraint needs a configured network",
                 Severity.WARNING,
             )
         }
