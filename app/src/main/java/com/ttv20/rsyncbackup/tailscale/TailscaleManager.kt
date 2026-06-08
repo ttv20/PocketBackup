@@ -283,7 +283,7 @@ class TailscaleManager(
     }
 
     companion object {
-        private const val TAG = "PocketBackupTailscale"
+        private const val TAG = "Pocket Backup Tailscale"
         private const val MAX_LOG_OUTPUT = 4000
         const val STATE_SECRET_ALIAS = "tailscale-state"
         private val HTTP_URL_PATTERN = Regex("""https?://\S+""")

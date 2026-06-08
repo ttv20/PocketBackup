@@ -181,7 +181,7 @@ jobs:
           fi
 
           for apk in "${apks[@]}"; do
-            cp "$apk" "dist/PocketBackup-${RELEASE_TAG}-$(basename "$apk")"
+            cp "$apk" "dist/Pocket-Backup-${RELEASE_TAG}-$(basename "$apk")"
           done
 
           (cd dist && sha256sum *.apk > SHA256SUMS.txt)
@@ -190,7 +190,7 @@ jobs:
         if: ${{ github.server_url == 'https://github.com' }}
         uses: actions/upload-artifact@v4
         with:
-          name: PocketBackup-${{ env.RELEASE_TAG }}-apk
+          name: Pocket-Backup-${{ env.RELEASE_TAG }}-apk
           path: |
             dist/*.apk
             dist/SHA256SUMS.txt
@@ -199,7 +199,7 @@ jobs:
         if: ${{ github.server_url != 'https://github.com' }}
         uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
-          name: PocketBackup-${{ env.RELEASE_TAG }}-apk
+          name: Pocket-Backup-${{ env.RELEASE_TAG }}-apk
           path: |
             dist/*.apk
             dist/SHA256SUMS.txt
@@ -228,7 +228,7 @@ jobs:
           if [[ "$status" == "404" ]]; then
             jq -n \
               --arg tag "$RELEASE_TAG" \
-              --arg title "PocketBackup $RELEASE_TAG" \
+              --arg title "Pocket Backup $RELEASE_TAG" \
               --arg target "$GITHUB_SHA" \
               '{
                 tag_name: $tag,
@@ -301,7 +301,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               dist/*.apk \
               dist/SHA256SUMS.txt \
-              --title "PocketBackup $RELEASE_TAG" \
+              --title "Pocket Backup $RELEASE_TAG" \
               --target "$GITHUB_SHA" \
               --generate-notes
           fi

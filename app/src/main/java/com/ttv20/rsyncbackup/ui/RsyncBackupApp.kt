@@ -4311,7 +4311,7 @@ private fun SettingsScreen(
             }
             SettingsExportAction.Save -> {
                 pendingSaveExportText = text
-                exportLauncher.launch("pocketbackup-config.json")
+                exportLauncher.launch("pocket-backup-config.json")
             }
         }
         exportError = null

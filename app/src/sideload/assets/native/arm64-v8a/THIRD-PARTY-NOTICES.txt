@@ -1,6 +1,6 @@
-PocketBackup native asset notices
+Pocket Backup native asset notices
 
-Original PocketBackup source code is MIT. Bundled native tools keep their own
+Original Pocket Backup source code is MIT. Bundled native tools keep their own
 upstream licenses.
 
 Native package snapshot:

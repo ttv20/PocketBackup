@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-PocketSync includes third-party software. Original PocketSync code is MIT, but
+Pocket Backup includes third-party software. Original Pocket Backup code is MIT, but
 these third-party components keep their own upstream licenses and notice
 requirements.
 
@@ -69,5 +69,5 @@ app/build.gradle.kts
 build.gradle.kts
 ```
 
-Those libraries are not relicensed by PocketSync. Keep their upstream license
+Those libraries are not relicensed by Pocket Backup. Keep their upstream license
 terms in mind when distributing modified APKs.

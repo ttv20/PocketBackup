@@ -22,7 +22,7 @@ data class GeneratedSshKey(
 class SshKeyManager(private val secretStore: SecretStore) {
     fun generateEd25519(
         alias: String = "ssh-private-key",
-        keyName: String = "android-phone-pocketbackup",
+        keyName: String = "android-phone-pocket-backup",
     ): GeneratedSshKey {
         val keyPair = generateEd25519KeyPair()
         val publicKey = opensshEd25519PublicKey(keyPair.public.encoded, keyName)

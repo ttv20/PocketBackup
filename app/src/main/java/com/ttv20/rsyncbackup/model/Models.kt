@@ -8,7 +8,7 @@ import kotlin.math.roundToInt
 private const val DEFAULT_PHONE_HOSTNAME = "android-phone"
 private const val LEGACY_TAILSCALE_NODE_NAME = "android-rsync"
 private const val DEFAULT_TAILSCALE_NODE_NAME = "$DEFAULT_PHONE_HOSTNAME-rsync"
-private const val DEFAULT_SSH_KEY_NAME = "$DEFAULT_PHONE_HOSTNAME-pocketbackup"
+private const val DEFAULT_SSH_KEY_NAME = "$DEFAULT_PHONE_HOSTNAME-pocket-backup"
 
 @Serializable
 data class AppState(
@@ -122,7 +122,7 @@ fun suggestedTailscaleNodeName(phoneHostname: String): String =
     "${safeDeviceName(phoneHostname)}-rsync"
 
 fun suggestedSshKeyName(phoneHostname: String): String =
-    "${safeDeviceName(phoneHostname)}-pocketbackup"
+    "${safeDeviceName(phoneHostname)}-pocket-backup"
 
 fun publicKeyWithSshKeyName(publicKey: String, keyName: String): String {
     val fields = publicKey.trim().split(Regex("\\s+"), limit = 3)

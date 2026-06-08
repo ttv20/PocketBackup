@@ -38,6 +38,6 @@ the APK assets:
 ./scripts/stage-native-assets.sh
 ```
 
-Original PocketSync code is MIT, but bundled native components keep their
+Original Pocket Backup code is MIT, but bundled native components keep their
 own upstream licenses. `rsync` is GPL-covered; release source and notices must
 preserve the GPL and other third-party license obligations.

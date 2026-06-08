@@ -1,5 +1,5 @@
 This local module replaces github.com/tailscale/web-client-prebuilt for the
-PocketBackup Android tsnet helper.
+Pocket Backup Android tsnet helper.
 
 The Android helper does not compile Tailscale's web client path, but Go module
 tidying still retains that dependency because Tailscale's module includes

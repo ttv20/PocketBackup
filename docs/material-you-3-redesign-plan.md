@@ -43,7 +43,7 @@ The app does not currently look like a Material You 3 app because the visual sys
 
 ## Visual Thesis
 
-PocketSync should feel like a quiet Android system utility: soft M3 surfaces, wallpaper-compatible color roles, generous rounded shape, clear action hierarchy, and compact but breathable operational lists.
+Pocket Backup should feel like a quiet Android system utility: soft M3 surfaces, wallpaper-compatible color roles, generous rounded shape, clear action hierarchy, and compact but breathable operational lists.
 
 ## Content And Interaction Thesis
 
@@ -56,7 +56,7 @@ PocketSync should feel like a quiet Android system utility: soft M3 surfaces, wa
 
 ### 1. Theme Foundation
 
-- Replace the narrow custom palette with a full static M3 light/dark `ColorScheme` generated from the existing seed color `#2F6F73` or a slightly calmer PocketSync seed.
+- Replace the narrow custom palette with a full static M3 light/dark `ColorScheme` generated from the existing seed color `#2F6F73` or a slightly calmer Pocket Backup seed.
 - Keep Android 12+ dynamic color out of this option unless explicitly requested later. The goal here is visual M3 consistency on Android 10+.
 - Add an app `Shapes` definition and pass it to `MaterialTheme`; use M3-like sizes such as `small = 8.dp`, `medium = 12.dp`, `large = 16.dp`, `extraLarge = 28.dp`.
 - Remove exact color comparisons like `MaterialTheme.colorScheme.background == Color(0xFF0B0F0E)`.
@@ -152,4 +152,4 @@ PocketSync should feel like a quiet Android system utility: soft M3 surfaces, wa
 
 ## Expected Result
 
-After this pass, the app should still behave like the current PocketSync utility, but visually it should read as a Material 3 Android app: softer shapes, fewer hard outlines, clearer action hierarchy, proper M3 color roles, tonal elevation, FABs for create actions, and less custom chrome.
+After this pass, the app should still behave like the current Pocket Backup utility, but visually it should read as a Material 3 Android app: softer shapes, fewer hard outlines, clearer action hierarchy, proper M3 color roles, tonal elevation, FABs for create actions, and less custom chrome.

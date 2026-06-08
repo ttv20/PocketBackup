@@ -1,8 +1,8 @@
-<img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="PocketBackup app icon">
+<img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="Pocket Backup app icon">
 
-# PocketBackup
+# Pocket Backup
 
-PocketBackup backs up your Android files to a server you own, using `rsync` over
+Pocket Backup backs up your Android files to a server you own, using `rsync` over
 SSH. No root, no Termux, no cloud middleman — `rsync`, OpenSSH, and Tailscale are
 all bundled into the APK, so the phone has everything it needs out of the box.
 
@@ -30,7 +30,7 @@ it can connect over Tailscale instead.
 
 ## Delete safety
 
-Before any backup that uses `rsync --delete`, PocketBackup checks the target for
+Before any backup that uses `rsync --delete`, Pocket Backup checks the target for
 a marker file, `.android-rsync-backup-root`. If the directory is non-empty and
 unmarked, the app won't write to it until the profile explicitly allows that
 target. This keeps a misconfigured path from wiping a directory that isn't a

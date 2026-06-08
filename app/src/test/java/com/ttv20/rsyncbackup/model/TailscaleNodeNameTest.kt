@@ -12,10 +12,10 @@ class TailscaleNodeNameTest {
     }
 
     @Test
-    fun suggestedSshKeyNameUsesPocketBackupSuffix() {
-        assertEquals("pixel-9-pro-pocketbackup", suggestedSshKeyName(" Pixel 9 Pro "))
-        assertEquals("tom-s-phone-pocketbackup", suggestedSshKeyName("Tom's Phone"))
-        assertEquals("android-phone-pocketbackup", suggestedSshKeyName("   "))
+    fun suggestedSshKeyNameUsesProductSuffix() {
+        assertEquals("pixel-9-pro-pocket-backup", suggestedSshKeyName(" Pixel 9 Pro "))
+        assertEquals("tom-s-phone-pocket-backup", suggestedSshKeyName("Tom's Phone"))
+        assertEquals("android-phone-pocket-backup", suggestedSshKeyName("   "))
     }
 
     @Test
@@ -30,7 +30,7 @@ class TailscaleNodeNameTest {
 
         val updated = state.withUpdatedSettings(state.settings.copy(phoneHostname = "Pixel 9 Pro"))
 
-        assertEquals("ssh-ed25519 AAAATEST pixel-9-pro-pocketbackup", updated.sshKeySettings.publicKey)
+        assertEquals("ssh-ed25519 AAAATEST pixel-9-pro-pocket-backup", updated.sshKeySettings.publicKey)
     }
 
     @Test

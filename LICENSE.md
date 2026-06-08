@@ -1,13 +1,13 @@
 # License
 
-Original PocketSync source code and documentation are released under the MIT
+Original Pocket Backup source code and documentation are released under the MIT
 License.
 
 SPDX-License-Identifier: MIT
 
 ## MIT License
 
-Copyright (c) 2026 PocketSync contributors
+Copyright (c) 2026 Pocket Backup contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -29,11 +29,11 @@ SOFTWARE.
 
 ## Third-Party Software
 
-This license applies only to original PocketSync code and documentation. It
+This license applies only to original Pocket Backup code and documentation. It
 does not relicense bundled third-party software, generated binaries, Android
 libraries, Gradle/Maven dependencies, or Go module dependencies.
 
-PocketSync release APKs bundle native components such as `rsync`, OpenSSH, and
+Pocket Backup release APKs bundle native components such as `rsync`, OpenSSH, and
 the `tsnet-nc` helper. Those components remain under their upstream licenses.
 The full GPLv3 text is kept in [COPYING](COPYING) for GPL-covered components
 such as `rsync`, and is also packaged with APK native assets as

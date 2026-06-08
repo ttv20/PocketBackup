@@ -6,10 +6,10 @@ AuthorName: ttv20
 SourceCode: https://codeberg.org/ttv20/PocketBackup
 IssueTracker: https://codeberg.org/ttv20/PocketBackup/issues
 Changelog: https://codeberg.org/ttv20/PocketBackup/releases
-Name: PocketBackup
+Name: Pocket Backup
 Summary: Backups to your own server with rsync, SSH, and optional Tailscale
 Description: |-
-  PocketBackup backs up Android shared storage to a user-controlled server with
+  Pocket Backup backs up Android shared storage to a user-controlled server with
   rsync over SSH. Tailscale connectivity is optional; LAN-only profiles can be
   configured without Tailscale setup.
 
