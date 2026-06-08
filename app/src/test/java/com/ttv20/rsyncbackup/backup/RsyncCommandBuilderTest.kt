@@ -42,6 +42,25 @@ class RsyncCommandBuilderTest {
     }
 
     @Test
+    fun dryRunFlagAddsDryRunArg() {
+        val command = RsyncCommandBuilder.build(
+            profile = profile(advancedArgs = "--max-size 10M"),
+            target = target,
+            route = Route.LAN,
+            binaryPaths = binaries,
+            sshKeyPath = "/files/id_ed25519",
+            knownHostsPath = "/files/known_hosts",
+            excludesPath = "/files/excludes",
+            tailscaleStateDir = "/files/tailscale",
+            tailscaleNodeName = "phone-rsync",
+            dryRun = true,
+        )
+
+        assertTrue(command.command.contains("--dry-run"))
+        assertTrue(command.command.lastIndexOf("--dry-run") > command.command.indexOf("--max-size"))
+    }
+
+    @Test
     fun tailscaleRouteUsesForwardedEndpointAndHostKeyAlias() {
         val command = RsyncCommandBuilder.build(
             profile = profile(targetMode = TargetMode.TAILSCALE_ONLY),

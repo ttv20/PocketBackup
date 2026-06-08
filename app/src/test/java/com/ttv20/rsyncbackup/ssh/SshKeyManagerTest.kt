@@ -15,7 +15,10 @@ class SshKeyManagerTest {
     @Test
     fun generateEd25519StoresPrivateKeyAndOpenSshPublicKey() {
         val secretStore = InMemorySecretStore()
-        val generated = SshKeyManager(secretStore).generateEd25519("test-key")
+        val generated = SshKeyManager(secretStore).generateEd25519(
+            alias = "test-key",
+            keyName = "pixel-9-pro-pocketbackup",
+        )
 
         assertEquals("test-key", generated.privateKeyAlias)
         assertTrue(generated.publicKey.startsWith("ssh-ed25519 "))
@@ -27,6 +30,7 @@ class SshKeyManagerTest {
         val publicKeyBlob = ByteBuffer.wrap(Base64.getDecoder().decode(publicKeyParts[1]))
         assertArrayEquals("ssh-ed25519".toByteArray(Charsets.US_ASCII), publicKeyBlob.readBytes())
         assertEquals(32, publicKeyBlob.readBytes().size)
+        assertEquals("pixel-9-pro-pocketbackup", publicKeyParts[2])
     }
 
     @Test

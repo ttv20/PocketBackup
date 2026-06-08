@@ -2,7 +2,9 @@ package com.ttv20.rsyncbackup.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -31,6 +33,36 @@ class ExportCodecTest {
     }
 
     @Test
+    fun exportOmitsDeviceLocalSettings() {
+        val state = configuredState().copy(
+            settings = GlobalSettings(
+                phoneHostname = "personal-phone",
+                logRetentionLimit = 37,
+                exactAlarmFallbackEnabled = false,
+                allFilesAccessRequested = false,
+                batteryOptimizationExemptionRequested = false,
+                themePreference = ThemePreference.DARK,
+                onboardingCompletedAt = "2026-06-03T00:00:00Z",
+                onboardingSkippedAt = "2026-06-03T00:01:00Z",
+                onboardingLastStep = "Review",
+            ),
+        )
+
+        val encoded = ExportCodec.encode(state.toExportDocument(now = "2026-06-03T00:00:00Z"))
+
+        assertTrue(encoded.contains("\"logRetentionLimit\": 37"))
+        assertFalse(encoded.contains("phoneHostname"))
+        assertFalse(encoded.contains("personal-phone"))
+        assertFalse(encoded.contains("exactAlarmFallbackEnabled"))
+        assertFalse(encoded.contains("allFilesAccessRequested"))
+        assertFalse(encoded.contains("batteryOptimizationExemptionRequested"))
+        assertFalse(encoded.contains("themePreference"))
+        assertFalse(encoded.contains("onboardingCompletedAt"))
+        assertFalse(encoded.contains("onboardingSkippedAt"))
+        assertFalse(encoded.contains("onboardingLastStep"))
+    }
+
+    @Test
     fun exportUsesTargetSchemaNames() {
         val encoded = ExportCodec.encode(configuredState().toExportDocument())
 
@@ -38,6 +70,64 @@ class ExportCodecTest {
         assertTrue(encoded.contains("\"targetId\""))
         assertFalse(encoded.contains("\"servers\""))
         assertFalse(encoded.contains("\"serverId\""))
+    }
+
+    @Test
+    fun exportScrubsTargetSshKeyOverrides() {
+        val state = configuredState().let { configured ->
+            configured.copy(
+                targets = listOf(
+                    configured.targets.single().copy(
+                        sshKeySettings = GlobalSshKeySettings(
+                            publicKey = "ssh-ed25519 AAA target-public",
+                            privateKeySecretAlias = "target-private-key",
+                            passphraseSecretAlias = "target-passphrase",
+                        ),
+                    ),
+                ),
+            )
+        }
+
+        val document = state.toExportDocument()
+        val encoded = ExportCodec.encode(document)
+
+        assertNull(document.targets.single().sshKeySettings)
+        assertFalse(encoded.contains("target-private-key"))
+        assertFalse(encoded.contains("target-passphrase"))
+        assertFalse(encoded.contains("ssh-ed25519 AAA target-public"))
+    }
+
+    @Test
+    fun privateKeyExportIsEncryptedAndPasswordProtected() {
+        val payload = SshPrivateKeyExportPayload(
+            publicKey = "ssh-ed25519 AAA public",
+            privateKeyPem = "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n",
+            passphrase = "key-passphrase",
+        )
+        val encrypted = SshPrivateKeyExportCrypto.encrypt(
+            payload = payload,
+            password = "export-password",
+            iterations = 100_000,
+        )
+        val encoded = ExportCodec.encode(
+            configuredState().toExportDocument(
+                now = "2026-06-03T00:00:00Z",
+                sshPrivateKey = encrypted,
+            ),
+        )
+
+        assertTrue(encoded.contains("\"sshPrivateKey\""))
+        assertFalse(encoded.contains(payload.privateKeyPem))
+        assertFalse(encoded.contains("key-passphrase"))
+
+        val decoded = ExportCodec.decode(encoded)
+        assertNotNull(decoded.sshPrivateKey)
+        val decodedPrivateKey = requireNotNull(decoded.sshPrivateKey)
+        assertEquals(payload, SshPrivateKeyExportCrypto.decrypt(decodedPrivateKey, "export-password"))
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            SshPrivateKeyExportCrypto.decrypt(decodedPrivateKey, "wrong-password")
+        }
+        assertTrue(error.message?.contains("incorrect") == true)
     }
 
     @Test
@@ -63,6 +153,55 @@ class ExportCodecTest {
         assertNull(imported.sshKeySettings.privateKeySecretAlias)
         assertFalse(imported.tailscale.isConfigured)
         assertNull(imported.tailscale.stateSecretAlias)
+    }
+
+    @Test
+    fun importKeepsDeviceLocalSettings() {
+        val current = AppState(
+            settings = GlobalSettings(
+                phoneHostname = "current-phone",
+                logRetentionLimit = 5,
+                exactAlarmFallbackEnabled = false,
+                allFilesAccessRequested = false,
+                batteryOptimizationExemptionRequested = false,
+                themePreference = ThemePreference.DARK,
+                onboardingCompletedAt = "2026-06-04T00:00:00Z",
+            ),
+        )
+        val exported = configuredState()
+            .copy(
+                settings = GlobalSettings(
+                    phoneHostname = "exported-phone",
+                    logRetentionLimit = 42,
+                    allFilesAccessRequested = true,
+                    batteryOptimizationExemptionRequested = true,
+                    themePreference = ThemePreference.LIGHT,
+                    onboardingCompletedAt = "2026-06-03T00:00:00Z",
+                ),
+            )
+            .toExportDocument()
+
+        val imported = current.withImportedConfiguration(exported)
+
+        assertEquals("current-phone", imported.settings.phoneHostname)
+        assertEquals(42, imported.settings.logRetentionLimit)
+        assertFalse(imported.settings.exactAlarmFallbackEnabled)
+        assertFalse(imported.settings.allFilesAccessRequested)
+        assertFalse(imported.settings.batteryOptimizationExemptionRequested)
+        assertEquals(ThemePreference.DARK, imported.settings.themePreference)
+        assertEquals("2026-06-04T00:00:00Z", imported.settings.onboardingCompletedAt)
+    }
+
+    @Test
+    fun exportAndImportPreserveDryRunEstimatePreference() {
+        val original = configuredState().copy(
+            profiles = configuredState().profiles.map { it.copy(dryRunBeforeBackup = false) },
+        )
+
+        val imported = AppState()
+            .withImportedConfiguration(ExportCodec.decode(ExportCodec.encode(original.toExportDocument())))
+
+        assertFalse(imported.profiles.single().dryRunBeforeBackup)
     }
 
     @Test

@@ -3,10 +3,12 @@ package com.ttv20.rsyncbackup.model
 import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val DEFAULT_PHONE_HOSTNAME = "android-phone"
 private const val LEGACY_TAILSCALE_NODE_NAME = "android-rsync"
 private const val DEFAULT_TAILSCALE_NODE_NAME = "$DEFAULT_PHONE_HOSTNAME-rsync"
+private const val DEFAULT_SSH_KEY_NAME = "$DEFAULT_PHONE_HOSTNAME-pocketbackup"
 
 @Serializable
 data class AppState(
@@ -101,6 +103,7 @@ data class BackupProfile(
     val constraints: ConstraintSettings = ConstraintSettings(),
     val remoteSafety: RemoteSafetySettings = RemoteSafetySettings(),
     val deleteEnabled: Boolean = true,
+    val dryRunBeforeBackup: Boolean = true,
     val excludes: String,
     val advancedArgs: String = "",
     val remoteSafetyReviewedAt: String? = null,
@@ -115,15 +118,28 @@ enum class TargetMode {
     TAILSCALE_ONLY,
 }
 
-fun suggestedTailscaleNodeName(phoneHostname: String): String {
-    val hostname = phoneHostname
+fun suggestedTailscaleNodeName(phoneHostname: String): String =
+    "${safeDeviceName(phoneHostname)}-rsync"
+
+fun suggestedSshKeyName(phoneHostname: String): String =
+    "${safeDeviceName(phoneHostname)}-pocketbackup"
+
+fun publicKeyWithSshKeyName(publicKey: String, keyName: String): String {
+    val fields = publicKey.trim().split(Regex("\\s+"), limit = 3)
+    if (fields.size < 2) return publicKey
+    return "${fields[0]} ${fields[1]} ${normalizedSshKeyName(keyName)}"
+}
+
+private fun safeDeviceName(phoneHostname: String): String =
+    phoneHostname
         .trim()
         .lowercase(Locale.US)
         .replace(Regex("[^a-z0-9-]+"), "-")
         .trim('-')
         .ifBlank { DEFAULT_PHONE_HOSTNAME }
-    return "$hostname-rsync"
-}
+
+private fun normalizedSshKeyName(keyName: String): String =
+    keyName.trim().replace(Regex("\\s+"), "-").ifBlank { DEFAULT_SSH_KEY_NAME }
 
 fun effectiveTailscaleNodeName(state: AppState): String {
     val suggested = suggestedTailscaleNodeName(state.settings.phoneHostname)
@@ -138,6 +154,7 @@ fun effectiveTailscaleNodeName(state: AppState): String {
 fun AppState.withUpdatedSettings(settings: GlobalSettings): AppState =
     copy(
         settings = settings,
+        sshKeySettings = sshKeySettings.withSuggestedSshKeyName(settings.phoneHostname),
         tailscale = tailscale.withSuggestedNodeName(
             previousPhoneHostname = this.settings.phoneHostname,
             phoneHostname = settings.phoneHostname,
@@ -175,10 +192,18 @@ private fun TailscaleStateMetadata.shouldUseSuggestedNodeName(phoneHostname: Str
         stored == suggestedTailscaleNodeName(phoneHostname)
 }
 
+private fun GlobalSshKeySettings.withSuggestedSshKeyName(phoneHostname: String): GlobalSshKeySettings {
+    val currentPublicKey = publicKey ?: return this
+    if (customPrivateKeyLabel != null) return this
+    val namedPublicKey = publicKeyWithSshKeyName(currentPublicKey, suggestedSshKeyName(phoneHostname))
+    return if (namedPublicKey == currentPublicKey) this else copy(publicKey = namedPublicKey)
+}
+
 @Serializable
 data class BackupSchedule(
     val type: ScheduleType = ScheduleType.DISABLED,
     val timeLocal: String = "03:00",
+    val weeklyDays: List<Int> = emptyList(),
 )
 
 @Serializable
@@ -186,7 +211,16 @@ enum class ScheduleType {
     DISABLED,
     EXACT_DAILY,
     BEST_EFFORT_DAILY,
+    WEEKLY,
 }
+
+fun allScheduleWeekDays(): List<Int> = (1..7).toList()
+
+fun normalizedScheduleWeekDays(days: List<Int>): List<Int> =
+    days
+        .filter { it in 1..7 }
+        .distinct()
+        .sorted()
 
 @Serializable
 data class ConstraintSettings(
@@ -246,6 +280,7 @@ data class RunProgressState(
     val progressPercent: Int? = null,
     val bytesTransferred: String? = null,
     val bytesTransferredRaw: Long? = null,
+    val plannedTransferBytesRaw: Long? = null,
     val speed: String? = null,
     val averageBytesPerSecond: Long? = null,
     val recentAverageBytesPerSecond: Long? = null,
@@ -259,6 +294,7 @@ data class RunProgressState(
 enum class RunProgressPhase {
     IDLE,
     PREPARING,
+    DRY_RUN,
     RUNNING_RSYNC,
     UPLOADING_STATUS,
     CANCELLING,
@@ -266,6 +302,17 @@ enum class RunProgressPhase {
     COMPLETED,
     FAILED,
     CANCELLED,
+}
+
+fun RunProgressState.transferProgressPercent(): Int? =
+    transferProgressPercent(bytesTransferredRaw, plannedTransferBytesRaw)
+
+fun transferProgressPercent(bytesTransferredRaw: Long?, plannedTransferBytesRaw: Long?): Int? {
+    val total = plannedTransferBytesRaw?.takeIf { it > 0L } ?: return null
+    val transferred = (bytesTransferredRaw ?: 0L).coerceIn(0L, total)
+    return ((transferred.toDouble() / total.toDouble()) * 100.0)
+        .roundToInt()
+        .coerceIn(0, 100)
 }
 
 @Serializable

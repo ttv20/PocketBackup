@@ -112,8 +112,8 @@ object RsyncCommandBuilder {
         val args = mutableListOf(binaryPaths.rsync)
         args += baseOptions
         if (profile.deleteEnabled) args += deleteOptions
-        if (dryRun) args += "--dry-run"
         args += ShellArgs.split(profile.advancedArgs)
+        if (dryRun) args += "--dry-run"
         args += "-e"
         args += sshArgs.joinToString(" ") { shellQuote(it) }
         args += "--exclude-from=$excludesPath"

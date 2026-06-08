@@ -67,6 +67,13 @@ object ProfileValidator {
                 Severity.WARNING,
             )
         }
+        if (profile.schedule.type == ScheduleType.WEEKLY && normalizedScheduleWeekDays(profile.schedule.weeklyDays).isEmpty()) {
+            issues += ValidationIssue(
+                "weekly_days_missing",
+                "Choose at least one day for weekly schedule",
+                Severity.ERROR,
+            )
+        }
         if (profile.advancedArgs.isNotBlank()) {
             runCatching { ShellArgs.split(profile.advancedArgs) }
                 .onFailure {
@@ -79,46 +86,6 @@ object ProfileValidator {
         }
 
         return issues
-    }
-
-    fun saveWarnings(profile: BackupProfile, state: AppState): List<ValidationIssue> {
-        val issues = mutableListOf<ValidationIssue>()
-        val remotePath = profile.remotePath.trim()
-        val target = state.targets.firstOrNull { it.id == profile.targetId }
-        if (profile.deleteEnabled && remotePathLooksBroad(remotePath)) {
-            issues += ValidationIssue(
-                "remote_path_broad_delete",
-                "Remote path looks too broad for a delete-enabled backup",
-                Severity.WARNING,
-            )
-        }
-        if (profile.deleteEnabled && target != null && !remotePathWithinDefault(remotePath, target.defaultRemotePath)) {
-            issues += ValidationIssue(
-                "remote_path_outside_target_default",
-                "Remote path differs from the selected target default; confirm it is a dedicated backup directory",
-                Severity.WARNING,
-            )
-        }
-        return issues
-    }
-
-    private fun remotePathLooksBroad(remotePath: String): Boolean {
-        if (remotePath.isBlank()) return false
-        val trimmed = remotePath.trimEnd('/')
-        if (trimmed in setOf("/", ".", "~")) return true
-        val segments = trimmed
-            .removePrefix("~/")
-            .trim('/')
-            .split('/')
-            .filter { it.isNotBlank() }
-        return segments.size <= 1
-    }
-
-    private fun remotePathWithinDefault(remotePath: String, defaultPath: String): Boolean {
-        val normalizedRemote = remotePath.trimEnd('/')
-        val normalizedDefault = defaultPath.trimEnd('/')
-        if (normalizedRemote.isBlank() || normalizedDefault.isBlank()) return true
-        return normalizedRemote == normalizedDefault || normalizedRemote.startsWith("$normalizedDefault/")
     }
 }
 

@@ -21,6 +21,7 @@ import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.RunProgressPhase
 import com.ttv20.rsyncbackup.model.RunProgressState
 import com.ttv20.rsyncbackup.model.RunStatus
+import com.ttv20.rsyncbackup.model.transferProgressPercent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -272,20 +273,28 @@ class BackupService : Service() {
 
     private fun runningNotification(progress: RunProgressState): android.app.Notification {
         val text = progress.message ?: progress.phase.notificationLabel()
-        val fileLine = progress.currentFile?.let { "Last: ${compactMiddle(it)}" }
-        val details = listOfNotNull(
-            progress.filesTransferred?.let { transferred ->
-                progress.filesDiscovered?.let { discovered ->
-                    "Files: $transferred/$discovered"
-                } ?: "Files: $transferred"
-            },
-            progress.bytesTransferredRaw?.let { "Transferred: ${formatBytes(it)}" }
-                ?: progress.bytesTransferred?.let { "Transferred: $it" },
-            progress.speed?.let { "Speed: $it" },
-            progress.averageBytesPerSecond?.let { "Avg speed: ${formatBytes(it)}/s" }
-                ?: progress.recentAverageBytesPerSecond?.let { "Avg speed: ${formatBytes(it)}/s" },
-            fileLine,
-        )
+        val fileLine = progress
+            .takeUnless { it.phase == RunProgressPhase.DRY_RUN }
+            ?.currentFile
+            ?.let { "Last: ${compactMiddle(it)}" }
+        val details = if (progress.phase == RunProgressPhase.DRY_RUN) {
+            emptyList()
+        } else {
+            listOfNotNull(
+                progress.filesTransferred?.let { transferred ->
+                    progress.filesDiscovered?.let { discovered ->
+                        "Files: $transferred/$discovered"
+                    } ?: "Files: $transferred"
+                },
+                progress.bytesTransferredRaw?.let { "Transferred: ${formatBytes(it)}" }
+                    ?: progress.bytesTransferred?.let { "Transferred: $it" },
+                progress.plannedTransferBytesRaw?.let { "Planned: ${formatBytes(it)}" },
+                progress.speed?.let { "Speed: $it" },
+                progress.averageBytesPerSecond?.let { "Avg speed: ${formatBytes(it)}/s" }
+                    ?: progress.recentAverageBytesPerSecond?.let { "Avg speed: ${formatBytes(it)}/s" },
+                fileLine,
+            )
+        }
         val bigText = notificationBigText(text, details, fileLine)
         val allowForceStop = progress.phase == RunProgressPhase.CANCELLING ||
             progress.phase == RunProgressPhase.FORCE_STOPPING
@@ -351,7 +360,11 @@ class BackupService : Service() {
     }
 
     private fun NotificationCompat.Builder.setProgressFor(progress: RunProgressState): NotificationCompat.Builder {
+        val transferPercent = progress.transferProgressPercent()
         return when {
+            progress.phase == RunProgressPhase.RUNNING_RSYNC && transferPercent != null -> {
+                setProgress(100, transferPercent, false)
+            }
             progress.phase.isActive() -> setProgress(0, 0, true)
             else -> setProgress(0, 0, false)
         }
@@ -359,6 +372,7 @@ class BackupService : Service() {
 
     private fun RunProgressPhase.isActive(): Boolean =
         this == RunProgressPhase.PREPARING ||
+            this == RunProgressPhase.DRY_RUN ||
             this == RunProgressPhase.RUNNING_RSYNC ||
             this == RunProgressPhase.UPLOADING_STATUS ||
             this == RunProgressPhase.CANCELLING ||
@@ -368,6 +382,7 @@ class BackupService : Service() {
         when (this) {
             RunProgressPhase.IDLE -> "Waiting"
             RunProgressPhase.PREPARING -> "Preparing backup"
+            RunProgressPhase.DRY_RUN -> "Estimating transfer size"
             RunProgressPhase.RUNNING_RSYNC -> "Running rsync"
             RunProgressPhase.UPLOADING_STATUS -> "Uploading backup status"
             RunProgressPhase.CANCELLING -> "Cancelling backup"

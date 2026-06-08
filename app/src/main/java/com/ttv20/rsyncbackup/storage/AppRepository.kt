@@ -22,6 +22,9 @@ import java.io.File
 import java.time.Instant
 import java.util.UUID
 
+private const val MAX_PERSISTED_LOG_RAW_CHARS = 32_768
+private const val TRUNCATED_RAW_LOG_PREFIX = "[Earlier raw backup output omitted to keep app storage bounded]\n"
+
 class AppRepository(
     private val dataFile: File,
     val defaultExcludes: String,
@@ -43,13 +46,13 @@ class AppRepository(
         val recovered = removeAbandonedOnboardingDuplicates(
             recoverInterruptedRunningBackup(loaded),
         ).copy(runProgress = RunProgressState())
-        mutableState.value = recovered.withUpdatedSettings(recovered.settings)
+        mutableState.value = sanitizeStateForStorage(recovered.withUpdatedSettings(recovered.settings))
         saveBlocking()
     }
 
     @Synchronized
     fun update(transform: (AppState) -> AppState) {
-        mutableState.value = transform(mutableState.value)
+        mutableState.value = sanitizeStateForStorage(transform(mutableState.value))
         saveBlocking()
     }
 
@@ -68,21 +71,35 @@ class AppRepository(
 
     fun removeProfile(profileId: String) {
         update { state ->
-            state.copy(
-                profiles = state.profiles.filterNot { it.id == profileId },
-                queue = state.queue.copy(
-                    queuedProfileIds = state.queue.queuedProfileIds.filterNot { it == profileId },
-                    runningProfileId = state.queue.runningProfileId.takeIf { it != profileId },
-                    runningTrigger = state.queue.runningTrigger.takeIf { state.queue.runningProfileId != profileId },
-                    queuedTriggers = state.queue.queuedTriggers - profileId,
-                ),
-            )
+            stateWithoutProfiles(state, setOf(profileId))
         }
     }
 
     fun upsertTarget(target: TargetRecord) {
         update { state ->
             state.copy(targets = state.targets.filterNot { it.id == target.id } + target)
+        }
+    }
+
+    fun removeTarget(targetId: String) {
+        update { state ->
+            val target = state.targets.firstOrNull { it.id == targetId } ?: return@update state
+            val remainingTargets = state.targets.filterNot { it.id == targetId }
+            val removedProfileIds = state.profiles
+                .filter { it.targetId == targetId }
+                .map { it.id }
+                .toSet()
+            val remainingFingerprintLookupIds = remainingTargets
+                .flatMap { listOf(it.id, it.fingerprintGroupId) }
+                .toSet()
+            val removedFingerprintLookupIds = setOf(target.id, target.fingerprintGroupId) - remainingFingerprintLookupIds
+
+            stateWithoutProfiles(state, removedProfileIds).copy(
+                targets = remainingTargets,
+                trustedHostFingerprints = state.trustedHostFingerprints.filterNot {
+                    it.targetId in removedFingerprintLookupIds
+                },
+            )
         }
     }
 
@@ -181,6 +198,39 @@ class AppRepository(
                 state
             }
         }
+    }
+
+    private fun stateWithoutProfiles(state: AppState, profileIds: Set<String>): AppState {
+        if (profileIds.isEmpty()) return state
+        val removingRunningProfile = state.queue.runningProfileId?.let { it in profileIds } == true
+        return state.copy(
+            profiles = state.profiles.filterNot { it.id in profileIds },
+            queue = state.queue.copy(
+                queuedProfileIds = state.queue.queuedProfileIds.filterNot { it in profileIds },
+                runningProfileId = state.queue.runningProfileId.takeUnless { it != null && it in profileIds },
+                runningTrigger = state.queue.runningTrigger.takeUnless { removingRunningProfile },
+                queuedTriggers = state.queue.queuedTriggers.filterKeys { it !in profileIds },
+            ),
+            runProgress = state.runProgress.takeUnless {
+                it.profileId != null && it.profileId in profileIds
+            }
+                ?: RunProgressState(),
+        )
+    }
+
+    private fun sanitizeStateForStorage(state: AppState): AppState {
+        val retainedLogs = state.logs
+            .take(state.settings.logRetentionLimit.coerceAtLeast(1))
+            .map { it.withBoundedRawOutput() }
+        return state.copy(logs = retainedLogs)
+    }
+
+    private fun BackupLog.withBoundedRawOutput(): BackupLog {
+        if (raw.length <= MAX_PERSISTED_LOG_RAW_CHARS) return this
+        val tailLength = (MAX_PERSISTED_LOG_RAW_CHARS - TRUNCATED_RAW_LOG_PREFIX.length)
+            .coerceAtLeast(0)
+        val boundedRaw = TRUNCATED_RAW_LOG_PREFIX + raw.takeLast(tailLength).trimStart('\n', '\r')
+        return copy(raw = boundedRaw)
     }
 
     private fun removeAbandonedOnboardingDuplicates(state: AppState): AppState {

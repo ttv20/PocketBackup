@@ -20,6 +20,15 @@ class RsyncOutputParserTest {
     }
 
     @Test
+    fun parsesZeroTransferredFileSize() {
+        val parser = RsyncOutputParser()
+        val progress = parser.accept("Total transferred file size: 0 bytes")
+
+        assertEquals("0 bytes", progress.bytesTransferred)
+        assertEquals(0L, progress.bytesTransferredRaw)
+    }
+
+    @Test
     fun parsesProgress2Lines() {
         val parser = RsyncOutputParser()
         val progress = parser.accept("1,024 42% 1.00MB/s 0:00:01 (xfr#3, to-chk=7/10)")

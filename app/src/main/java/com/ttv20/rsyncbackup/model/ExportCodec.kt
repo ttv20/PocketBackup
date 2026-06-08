@@ -12,12 +12,18 @@ import java.time.Instant
 data class ExportDocument(
     val schemaVersion: Int = 1,
     val exportedAt: String,
-    val settings: GlobalSettings,
+    val settings: ExportSettings = ExportSettings(),
     val sshPublicKey: String? = null,
+    val sshPrivateKey: EncryptedSshPrivateKeyExport? = null,
     val tailscale: ExportTailscaleMetadata,
     val targets: List<TargetRecord>,
     val profiles: List<BackupProfile>,
     val trustedHostFingerprints: List<TrustedHostFingerprint>,
+)
+
+@Serializable
+data class ExportSettings(
+    val logRetentionLimit: Int = 20,
 )
 
 @Serializable
@@ -80,11 +86,17 @@ private fun String.cleanSsid(): String? =
         .trim('"')
         .takeIf { it.isNotBlank() }
 
-fun AppState.toExportDocument(now: String = Instant.now().toString()): ExportDocument =
+fun AppState.toExportDocument(
+    now: String = Instant.now().toString(),
+    sshPrivateKey: EncryptedSshPrivateKeyExport? = null,
+): ExportDocument =
     ExportDocument(
         exportedAt = now,
-        settings = settings,
+        settings = ExportSettings(
+            logRetentionLimit = settings.logRetentionLimit,
+        ),
         sshPublicKey = sshKeySettings.publicKey,
+        sshPrivateKey = sshPrivateKey,
         tailscale = ExportTailscaleMetadata(
             isConfigured = tailscale.isConfigured,
             nodeName = tailscale.nodeName,
@@ -92,14 +104,16 @@ fun AppState.toExportDocument(now: String = Instant.now().toString()): ExportDoc
             lastReachabilityTestAt = tailscale.lastReachabilityTestAt,
             keyExpiryAdviceAcknowledged = tailscale.keyExpiryAdviceAcknowledged,
         ),
-        targets = targets,
+        targets = targets.map { it.copy(sshKeySettings = null) },
         profiles = profiles,
         trustedHostFingerprints = trustedHostFingerprints,
     )
 
 fun AppState.withImportedConfiguration(document: ExportDocument): AppState =
     copy(
-        settings = document.settings,
+        settings = settings.copy(
+            logRetentionLimit = document.settings.logRetentionLimit,
+        ),
         sshKeySettings = GlobalSshKeySettings(publicKey = document.sshPublicKey),
         tailscale = TailscaleStateMetadata(
             isConfigured = false,

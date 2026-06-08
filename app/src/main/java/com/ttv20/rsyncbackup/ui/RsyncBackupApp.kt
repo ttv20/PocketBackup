@@ -8,6 +8,7 @@ package com.ttv20.rsyncbackup.ui
 
 import android.Manifest
 import android.app.Activity
+import android.app.TimePickerDialog
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
@@ -15,6 +16,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
+import android.text.format.DateFormat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -85,6 +87,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Sync
@@ -94,6 +97,7 @@ import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -107,6 +111,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -152,6 +157,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -165,6 +172,7 @@ import com.ttv20.rsyncbackup.backup.BackupConstraintEvaluator
 import com.ttv20.rsyncbackup.backup.ConstraintSnapshot
 import com.ttv20.rsyncbackup.backup.NativeBinaryManager
 import com.ttv20.rsyncbackup.backup.RsyncCommandBuilder
+import com.ttv20.rsyncbackup.backup.SshRuntimeFiles
 import com.ttv20.rsyncbackup.model.AppState
 import com.ttv20.rsyncbackup.model.BackupEndReason
 import com.ttv20.rsyncbackup.model.BackupLog
@@ -173,6 +181,7 @@ import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.BackupSchedule
 import com.ttv20.rsyncbackup.model.ConstraintSettings
 import com.ttv20.rsyncbackup.model.ExportCodec
+import com.ttv20.rsyncbackup.model.ExportDocument
 import com.ttv20.rsyncbackup.model.GlobalSettings
 import com.ttv20.rsyncbackup.model.GlobalSshKeySettings
 import com.ttv20.rsyncbackup.model.ProfileValidator
@@ -184,16 +193,23 @@ import com.ttv20.rsyncbackup.model.RunStatus
 import com.ttv20.rsyncbackup.model.ScheduleType
 import com.ttv20.rsyncbackup.model.TargetRecord
 import com.ttv20.rsyncbackup.model.Severity
+import com.ttv20.rsyncbackup.model.SshPrivateKeyExportCrypto
+import com.ttv20.rsyncbackup.model.SshPrivateKeyExportPayload
 import com.ttv20.rsyncbackup.model.TargetMode
 import com.ttv20.rsyncbackup.model.TailscaleStateMetadata
 import com.ttv20.rsyncbackup.model.ThemePreference
+import com.ttv20.rsyncbackup.model.allScheduleWeekDays
 import com.ttv20.rsyncbackup.model.requiresLan
 import com.ttv20.rsyncbackup.model.requiresTailscale
 import com.ttv20.rsyncbackup.model.effectiveTailscaleNodeName
+import com.ttv20.rsyncbackup.model.normalizedScheduleWeekDays
 import com.ttv20.rsyncbackup.model.resolvedSshKeySettings
 import com.ttv20.rsyncbackup.model.routeOrder
+import com.ttv20.rsyncbackup.model.suggestedSshKeyName
 import com.ttv20.rsyncbackup.model.suggestedTailscaleNodeName
 import com.ttv20.rsyncbackup.model.toExportDocument
+import com.ttv20.rsyncbackup.model.transferProgressPercent
+import com.ttv20.rsyncbackup.model.withImportedConfiguration
 import com.ttv20.rsyncbackup.model.withUpdatedSettings
 import com.ttv20.rsyncbackup.permissions.PermissionIntents
 import com.ttv20.rsyncbackup.permissions.PermissionStateReader
@@ -212,7 +228,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.DayOfWeek
 import java.time.Instant
+import java.time.LocalTime
+import java.time.format.TextStyle
+import java.time.temporal.WeekFields
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -227,9 +247,16 @@ private enum class Screen(val label: String, val icon: ImageVector) {
     Settings("Settings", Icons.Outlined.Settings),
 }
 
+private enum class SettingsExportAction {
+    Copy,
+    Save,
+}
+
 private val MainScreens = listOf(Screen.Dashboard, Screen.Profiles, Screen.Targets, Screen.Logs)
 private const val MIN_PORT = 1
 private const val MAX_PORT = 65535
+private const val IMPORTED_SSH_PRIVATE_KEY_ALIAS = "imported-ssh-private-key"
+private const val IMPORTED_SSH_PASSPHRASE_ALIAS = "imported-ssh-passphrase"
 
 private enum class OnboardingStep(val title: String) {
     Welcome("Welcome"),
@@ -1415,6 +1442,7 @@ private fun AppScaffold(
                             state,
                             permissions,
                             repository,
+                            secretStore,
                             onRefreshPermissions,
                             onSelect,
                             onStartOnboarding,
@@ -1432,6 +1460,8 @@ private data class QueueProgressSummary(
     val message: String,
     val metrics: List<Pair<String, String>>,
     val fileLine: String?,
+    val transferPercent: Int?,
+    val spinnerOnly: Boolean = false,
 )
 
 private fun AppState.queueJobCount(): Int =
@@ -1439,6 +1469,9 @@ private fun AppState.queueJobCount(): Int =
 
 private fun jobCountLabel(count: Int): String =
     "$count ${if (count == 1) "job" else "jobs"}"
+
+private fun profileCountLabel(count: Int): String =
+    "$count ${if (count == 1) "profile" else "profiles"}"
 
 private fun defaultTargetModeFor(target: TargetRecord, preferred: TargetMode? = null): TargetMode {
     if (preferred != null && preferred.unavailableReason(target) == null) return preferred
@@ -1504,44 +1537,56 @@ private fun DashboardScreen(
         item {
             SectionHeader("Dashboard")
         }
-        items(state.profiles, key = { it.id }) { profile ->
-            val issues = ProfileValidator.validate(profile, state)
-            val checklist = setupChecklistForProfile(profile, state, permissions, constraintSnapshot)
-            val liveProgress = state.runProgress.takeIf { it.profileId == profile.id }
-            val isRunningProfile = state.queue.runningProfileId == profile.id
-            val target = state.targets.firstOrNull { it.id == profile.targetId }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ProfileListRow(
-                    profile = profile,
-                    target = target,
-                    issues = issues,
-                    showRunStatus = true,
-                    liveProgress = liveProgress,
-                    isRunning = isRunningProfile,
-                    trailing = {
-                        Button(
-                            onClick = {
-                                if (isRunningProfile) BackupService.cancel(context) else onRun(RunRequest(context, profile.id))
-                            },
-                            enabled = isRunningProfile || issues.none { it.severity == Severity.ERROR },
-                            modifier = Modifier.testTag("dashboard-run-profile-${profile.id}"),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                        ) {
-                            Icon(
-                                if (isRunningProfile) Icons.Outlined.Error else Icons.Outlined.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (isRunningProfile) "Stop" else "Run")
-                        }
-                    },
+        if (state.profiles.isEmpty()) {
+            item {
+                EmptyStateCard(
+                    icon = Icons.Outlined.Folder,
+                    title = "No backup profiles",
+                    body = "Create a profile to choose what should be backed up and where it should go.",
+                    action = "Start setup",
+                    onAction = { onStartOnboarding(OnboardingStep.Welcome) },
                 )
-                if (checklist.any { !it.complete }) {
-                    SetupRepairCard(
-                        checklist = checklist,
-                        onOpenStep = { onStartOnboarding(firstMissingSetupStep(checklist)) },
+            }
+        } else {
+            items(state.profiles, key = { it.id }) { profile ->
+                val issues = ProfileValidator.validate(profile, state)
+                val checklist = setupChecklistForProfile(profile, state, permissions, constraintSnapshot)
+                val liveProgress = state.runProgress.takeIf { it.profileId == profile.id }
+                val isRunningProfile = state.queue.runningProfileId == profile.id
+                val target = state.targets.firstOrNull { it.id == profile.targetId }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProfileListRow(
+                        profile = profile,
+                        target = target,
+                        issues = issues,
+                        showRunStatus = true,
+                        liveProgress = liveProgress,
+                        isRunning = isRunningProfile,
+                        trailing = {
+                            Button(
+                                onClick = {
+                                    if (isRunningProfile) BackupService.cancel(context) else onRun(RunRequest(context, profile.id))
+                                },
+                                enabled = isRunningProfile || issues.none { it.severity == Severity.ERROR },
+                                modifier = Modifier.testTag("dashboard-run-profile-${profile.id}"),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            ) {
+                                Icon(
+                                    if (isRunningProfile) Icons.Outlined.Error else Icons.Outlined.PlayArrow,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (isRunningProfile) "Stop" else "Run")
+                            }
+                        },
                     )
+                    if (checklist.any { !it.complete }) {
+                        SetupRepairCard(
+                            checklist = checklist,
+                            onOpenStep = { onStartOnboarding(firstMissingSetupStep(checklist)) },
+                        )
+                    }
                 }
             }
         }
@@ -1574,6 +1619,8 @@ private fun QueueSection(state: AppState) {
                     detail = progressSummary?.message ?: runningProfile?.status?.lastMessage ?: "In progress",
                     metrics = progressSummary?.metrics.orEmpty(),
                     fileLine = progressSummary?.fileLine,
+                    transferPercent = progressSummary?.transferPercent,
+                    spinnerOnly = progressSummary?.spinnerOnly == true,
                     active = true,
                 )
             }
@@ -1585,20 +1632,32 @@ private fun QueueSection(state: AppState) {
 }
 
 private fun RunProgressState.toQueueProgressSummary(): QueueProgressSummary =
-    QueueProgressSummary(
-        message = message ?: phase.notificationLabel(),
-        metrics = listOfNotNull(
-            filesTransferred?.let { transferred ->
-                "Files" to (filesDiscovered?.let { discovered -> "$transferred/$discovered" } ?: transferred.toString())
-            },
-            bytesTransferredRaw?.let { "Transferred" to formatBytesUi(it) }
-                ?: bytesTransferred?.let { "Transferred" to it },
-            speed?.let { "Speed" to it },
-            averageBytesPerSecond?.let { "Avg speed" to "${formatBytesUi(it)}/s" }
-                ?: recentAverageBytesPerSecond?.let { "Avg speed" to "${formatBytesUi(it)}/s" },
-        ),
-        fileLine = currentFile?.let { "Last: ${compactMiddleUi(it)}" },
-    )
+    if (phase == RunProgressPhase.DRY_RUN) {
+        QueueProgressSummary(
+            message = message ?: phase.notificationLabel(),
+            metrics = emptyList(),
+            fileLine = null,
+            transferPercent = null,
+            spinnerOnly = true,
+        )
+    } else {
+        QueueProgressSummary(
+            message = message ?: phase.notificationLabel(),
+            metrics = listOfNotNull(
+                filesTransferred?.let { transferred ->
+                    "Files" to (filesDiscovered?.let { discovered -> "$transferred/$discovered" } ?: transferred.toString())
+                },
+                bytesTransferredRaw?.let { "Transferred" to formatBytesUi(it) }
+                    ?: bytesTransferred?.let { "Transferred" to it },
+                plannedTransferBytesRaw?.let { "Planned" to formatBytesUi(it) },
+                speed?.let { "Speed" to it },
+                averageBytesPerSecond?.let { "Avg speed" to "${formatBytesUi(it)}/s" }
+                    ?: recentAverageBytesPerSecond?.let { "Avg speed" to "${formatBytesUi(it)}/s" },
+            ),
+            fileLine = currentFile?.let { "Last: ${compactMiddleUi(it)}" },
+            transferPercent = transferProgressPercent(),
+        )
+    }
 
 @Composable
 private fun QueueRow(
@@ -1607,14 +1666,39 @@ private fun QueueRow(
     detail: String,
     metrics: List<Pair<String, String>> = emptyList(),
     fileLine: String? = null,
+    transferPercent: Int? = null,
+    spinnerOnly: Boolean = false,
     active: Boolean = false,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        StatusBadge(label, MetricTone.Route, animated = active)
+        if (spinnerOnly) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+            )
+        } else {
+            StatusBadge(label, MetricTone.Route, animated = active)
+        }
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!spinnerOnly) {
+                Text(name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(
+                detail,
+                style = if (spinnerOnly) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            transferPercent?.let { percent ->
+                LinearProgressIndicator(
+                    progress = { percent / 100f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp),
+                )
+            }
             if (metrics.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     metrics.forEach { (metricLabel, value) ->
@@ -1777,12 +1861,41 @@ private fun LastNextLine(profile: BackupProfile) {
 @Composable
 private fun DashboardRunStatusLine(profile: BackupProfile, liveProgress: RunProgressState?) {
     val live = liveProgress?.takeIf { it.phase != RunProgressPhase.IDLE }
+    val dryRunMessage = live
+        ?.takeIf { it.phase == RunProgressPhase.DRY_RUN }
+        ?.let { it.message ?: it.phase.notificationLabel() }
+    val transferPercent = live?.transferProgressPercent()
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        StatusBadge(
-            label = live?.let { phaseLabel(it.phase) } ?: profile.status.lastStatus.displayLabel(),
-            tone = live?.let { MetricTone.Route } ?: profile.status.lastStatus.tone(),
-            animated = live?.phase?.hasActiveMotion() == true,
-        )
+        if (dryRunMessage != null) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                dryRunMessage,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            StatusBadge(
+                label = live?.let { phaseLabel(it.phase) } ?: profile.status.lastStatus.displayLabel(),
+                tone = live?.let { MetricTone.Route } ?: profile.status.lastStatus.tone(),
+                animated = live?.phase?.hasActiveMotion() == true,
+            )
+            transferPercent?.let { percent ->
+                Spacer(Modifier.width(8.dp))
+                LinearProgressIndicator(
+                    progress = { percent / 100f },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(4.dp),
+                )
+            }
+        }
     }
 }
 
@@ -1865,13 +1978,46 @@ private fun AddRow(label: String, icon: ImageVector, onClick: () -> Unit, modifi
 }
 
 @Composable
-private fun EmptyActionRow(title: String, action: String, icon: ImageVector, onClick: () -> Unit) {
-    SectionCard {
-        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        OutlinedButton(onClick = onClick) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(action)
+private fun EmptyStateCard(
+    icon: ImageVector,
+    title: String,
+    body: String,
+    action: String,
+    onAction: () -> Unit,
+    actionButtonTag: String? = null,
+    modifier: Modifier = Modifier,
+) {
+    SectionCard(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 280.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            EntityIcon(icon, MetricTone.Route)
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                body,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = onAction,
+                modifier = actionButtonTag?.let { Modifier.testTag(it) } ?: Modifier,
+            ) {
+                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(action)
+            }
         }
     }
 }
@@ -1888,6 +2034,7 @@ private fun EditorHeader(
     onSecondaryAction: (() -> Unit)? = null,
     secondaryActionLabel: String? = null,
     secondaryActionIcon: ImageVector? = null,
+    secondaryActionEnabled: Boolean = true,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1920,7 +2067,10 @@ private fun EditorHeader(
                     Text(saveLabel)
                 }
                 if (onSecondaryAction != null && secondaryActionLabel != null) {
-                    OutlinedButton(onClick = onSecondaryAction) {
+                    OutlinedButton(
+                        onClick = onSecondaryAction,
+                        enabled = secondaryActionEnabled,
+                    ) {
                         secondaryActionIcon?.let {
                             Icon(it, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
@@ -1962,6 +2112,38 @@ private fun UnsavedChangesDialog(
                 TextButton(onClick = onDismiss) {
                     Text("Cancel")
                 }
+            }
+        },
+    )
+}
+
+@Composable
+private fun DeleteConfirmationDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                ),
+            ) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
             }
         },
     )
@@ -2011,6 +2193,7 @@ private fun scheduleLabel(schedule: BackupSchedule): String =
         ScheduleType.DISABLED -> "Disabled"
         ScheduleType.EXACT_DAILY -> "Daily, ${schedule.timeLocal}"
         ScheduleType.BEST_EFFORT_DAILY -> "Best effort, ${schedule.timeLocal}"
+        ScheduleType.WEEKLY -> "Weekly, ${weeklyScheduleSummary(schedule.weeklyDays)}, ${schedule.timeLocal}"
     }
 
 private fun knownWifiSsidOptions(
@@ -2100,6 +2283,9 @@ private fun ProfilesScreen(
                 },
                 onDelete = {
                     if (!isDraft) {
+                        if (state.queue.runningProfileId == editingProfile.id) {
+                            BackupService.cancel(context)
+                        }
                         scheduler.cancel(editingProfile.id)
                         repository.removeProfile(editingProfile.id)
                     }
@@ -2115,81 +2301,98 @@ private fun ProfilesScreen(
             )
         } else {
             Box(Modifier.fillMaxSize()) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    item {
-                        SectionHeader("Profiles")
-                    }
-                    items(state.profiles, key = { it.id }) { profile ->
-                        val target = state.targets.firstOrNull { it.id == profile.targetId }
-                        val issues = ProfileValidator.validate(profile, state)
-                        val isRunningProfile = state.queue.runningProfileId == profile.id
-                        ProfileListRow(
-                            profile = profile,
-                            target = target,
-                            issues = issues,
-                            isRunning = isRunningProfile,
-                            trailing = {
-                                Column(
-                                    horizontalAlignment = Alignment.End,
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    FilledTonalButton(
-                                        onClick = {
-                                            if (isRunningProfile) {
-                                                BackupService.cancel(context)
-                                            } else {
-                                                BackupService.start(context, profile.id)
-                                                onOpenDashboard()
-                                            }
-                                        },
-                                        enabled = isRunningProfile || issues.none { it.severity == Severity.ERROR },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                                    ) {
-                                        Icon(
-                                            if (isRunningProfile) Icons.Outlined.Error else Icons.Outlined.PlayArrow,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(if (isRunningProfile) "Stop" else "Run")
-                                    }
-                                    OutlinedButton(
-                                        onClick = {
-                                            editorIsDraft = false
-                                            editorProfile = profile
-                                            onDetailActiveChange(true, closeEditor)
-                                            compactEditorOpen = true
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                                    ) {
-                                        Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Edit")
-                                    }
-                                }
-                            },
-                        )
-                    }
-                    if (state.profiles.isEmpty()) {
+                if (state.profiles.isEmpty()) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         item {
-                            EmptyActionRow("No profiles yet", "Add profile", Icons.Outlined.Add, addProfile)
+                            SectionHeader("Profiles")
+                        }
+                        item {
+                            EmptyStateCard(
+                                icon = Icons.Outlined.Folder,
+                                title = "No profiles yet",
+                                body = "Add a backup profile to choose a phone folder, target, schedule, and sync rules.",
+                                action = "Add profile",
+                                onAction = addProfile,
+                                actionButtonTag = "profiles-add-button",
+                            )
                         }
                     }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        item {
+                            SectionHeader("Profiles")
+                        }
+                        items(state.profiles, key = { it.id }) { profile ->
+                            val target = state.targets.firstOrNull { it.id == profile.targetId }
+                            val issues = ProfileValidator.validate(profile, state)
+                            val isRunningProfile = state.queue.runningProfileId == profile.id
+                            ProfileListRow(
+                                profile = profile,
+                                target = target,
+                                issues = issues,
+                                isRunning = isRunningProfile,
+                                trailing = {
+                                    Column(
+                                        horizontalAlignment = Alignment.End,
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        FilledTonalButton(
+                                            onClick = {
+                                                if (isRunningProfile) {
+                                                    BackupService.cancel(context)
+                                                } else {
+                                                    BackupService.start(context, profile.id)
+                                                    onOpenDashboard()
+                                                }
+                                            },
+                                            enabled = isRunningProfile || issues.none { it.severity == Severity.ERROR },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                        ) {
+                                            Icon(
+                                                if (isRunningProfile) Icons.Outlined.Error else Icons.Outlined.PlayArrow,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(if (isRunningProfile) "Stop" else "Run")
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                editorIsDraft = false
+                                                editorProfile = profile
+                                                onDetailActiveChange(true, closeEditor)
+                                                compactEditorOpen = true
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                        ) {
+                                            Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Edit")
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    ExtendedFloatingActionButton(
+                        onClick = addProfile,
+                        icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                        text = { Text("Add profile") },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .imePadding()
+                            .padding(16.dp)
+                            .testTag("profiles-add-button"),
+                    )
                 }
-                ExtendedFloatingActionButton(
-                    onClick = addProfile,
-                    icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                    text = { Text("Add profile") },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .imePadding()
-                        .padding(16.dp)
-                        .testTag("profiles-add-button"),
-                )
             }
         }
     }
@@ -2213,10 +2416,9 @@ private fun ProfileEditor(
     val context = LocalContext.current
     var editing by remember(profile.id, profile) { mutableStateOf(profile) }
     var sourcePickerError by remember(profile.id) { mutableStateOf<String?>(null) }
-    var pendingSaveWarnings by remember(profile.id) {
-        mutableStateOf<List<com.ttv20.rsyncbackup.model.ValidationIssue>>(emptyList())
-    }
     var showUnsavedPrompt by rememberSaveable(profile.id) { mutableStateOf(false) }
+    var showDeletePrompt by rememberSaveable(profile.id) { mutableStateOf(false) }
+    var showExcludesDialog by rememberSaveable(profile.id) { mutableStateOf(false) }
     var browserRequest by remember(profile.id) { mutableStateOf<RemotePathBrowseRequest?>(null) }
     val selectedTarget = state.targets.firstOrNull { it.id == editing.targetId }
     val issues = ProfileValidator.validate(editing, state)
@@ -2228,18 +2430,19 @@ private fun ProfileEditor(
     }
     val canSave = issues.none { it.severity == Severity.ERROR }
     val hasUnsavedChanges = isDraft || editing != profile
+    val requestDelete = {
+        if (isDraft) {
+            onDelete?.invoke()
+        } else {
+            showDeletePrompt = true
+        }
+    }
     val saveProfile = {
         val sanitized = editing.copy(
             remoteSafety = RemoteSafetySettings(),
             remoteSafetyReviewedAt = Instant.now().toString(),
         )
-        val warnings = ProfileValidator.saveWarnings(sanitized, state)
-        if (warnings.isEmpty()) {
-            pendingSaveWarnings = emptyList()
-            onSave(sanitized)
-        } else {
-            pendingSaveWarnings = warnings
-        }
+        onSave(sanitized)
     }
     val sourcePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
@@ -2283,6 +2486,20 @@ private fun ProfileEditor(
         )
     }
 
+    if (showDeletePrompt) {
+        val profileName = editing.name.trim().ifBlank { "this profile" }
+        DeleteConfirmationDialog(
+            title = "Delete profile?",
+            message = "This removes $profileName and cancels its scheduled backup jobs. Backup logs are kept.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                showDeletePrompt = false
+                onDelete?.invoke()
+            },
+            onDismiss = { showDeletePrompt = false },
+        )
+    }
+
     browserRequest?.let { request ->
         RemotePathBrowserScreen(
             title = request.title,
@@ -2313,7 +2530,7 @@ private fun ProfileEditor(
                 onSave = saveProfile,
                 saveEnabled = canSave,
                 saveButtonTag = "profile-save-button",
-                onSecondaryAction = onDelete,
+                onSecondaryAction = onDelete?.let { { requestDelete() } },
                 secondaryActionLabel = deleteLabel.takeIf { onDelete != null },
                 secondaryActionIcon = Icons.Outlined.Delete.takeIf { onDelete != null },
             )
@@ -2327,27 +2544,6 @@ private fun ProfileEditor(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             IssueList(issues)
-            AnimatedStateBlock(visible = pendingSaveWarnings.isNotEmpty()) {
-                SectionCard {
-                    Text("Save warning", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    IssueList(pendingSaveWarnings)
-                    Button(
-                        onClick = {
-                            val sanitized = editing.copy(
-                                remoteSafety = RemoteSafetySettings(),
-                                remoteSafetyReviewedAt = Instant.now().toString(),
-                            )
-                            pendingSaveWarnings = emptyList()
-                            onSave(sanitized)
-                        },
-                        modifier = Modifier.testTag("profile-save-anyway-button"),
-                    ) {
-                        Icon(Icons.Outlined.Save, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Save anyway")
-                    }
-                }
-            }
             SectionCard {
                 Text("Source", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(
@@ -2461,15 +2657,18 @@ private fun ProfileEditor(
                 ) {
                     editing = editing.copy(constraints = it)
                 }
+                ToggleDetailRow(
+                    title = "Run dry-run estimate first",
+                    detail = "Estimates transfer bytes before backup so progress can be shown.",
+                    checked = editing.dryRunBeforeBackup,
+                    onChange = { editing = editing.copy(dryRunBeforeBackup = it) },
+                )
                 WarningRow("Delete remote files not present locally", "Deletes target files that are not present in the source.", editing.deleteEnabled) {
                     editing = editing.copy(deleteEnabled = it)
                 }
-                OutlinedTextField(
+                ExcludesSummaryRow(
                     value = editing.excludes,
-                    onValueChange = { editing = editing.copy(excludes = it) },
-                    label = { Text("Excludes") },
-                    minLines = 6,
-                    modifier = Modifier.fillMaxWidth(),
+                    onOpen = { showExcludesDialog = true },
                 )
                 OutlinedTextField(
                     value = editing.advancedArgs,
@@ -2492,6 +2691,17 @@ private fun ProfileEditor(
             }
         }
     }
+
+    if (showExcludesDialog) {
+        ExcludesEditorDialog(
+            value = editing.excludes,
+            onSave = {
+                editing = editing.copy(excludes = it)
+                showExcludesDialog = false
+            },
+            onCancel = { showExcludesDialog = false },
+        )
+    }
 }
 
 @Composable
@@ -2501,6 +2711,8 @@ private fun TargetsScreen(
     secretStore: SecretStore,
     onDetailActiveChange: (Boolean, (() -> Unit)?) -> Unit,
 ) {
+    val context = LocalContext.current
+    val scheduler = remember(context) { BackupScheduler(context) }
     var compactEditorOpen by rememberSaveable { mutableStateOf(false) }
     var editorTarget by remember { mutableStateOf<TargetRecord?>(null) }
     var editorIsDraft by rememberSaveable { mutableStateOf(false) }
@@ -2542,6 +2754,8 @@ private fun TargetsScreen(
     ) { editingTarget ->
         if (editingTarget != null) {
             val isDraft = editorIsDraft
+            val dependentProfiles = state.profiles.filter { it.targetId == editingTarget.id }
+            val dependentProfileIds = dependentProfiles.map { it.id }
             TargetEditor(
                 state = state,
                 target = editingTarget,
@@ -2551,70 +2765,109 @@ private fun TargetsScreen(
                     repository.upsertTarget(it)
                     closeEditor()
                 },
+                onDelete = if (isDraft) {
+                    null
+                } else {
+                    {
+                        if (state.queue.runningProfileId?.let { it in dependentProfileIds } == true) {
+                            BackupService.cancel(context)
+                        }
+                        dependentProfileIds.forEach { scheduler.cancel(it) }
+                        repository.removeTarget(editingTarget.id)
+                        closeEditor()
+                    }
+                },
                 onBack = closeEditor,
                 onBackHandlerChange = { editorBackHandler = it },
                 isDraft = isDraft,
                 cancelLabel = if (isDraft) "Cancel" else "Back",
+                deleteWarningText = targetDeleteWarningText(editingTarget, dependentProfiles.size),
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
             Box(Modifier.fillMaxSize()) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    item {
-                        SectionHeader("Targets")
-                    }
-                    items(state.targets, key = { it.id }) { target ->
-                        val trusted = state.trustedHostFingerprints.any {
-                            it.targetId == target.id || it.targetId == target.fingerprintGroupId
-                        }
-                        TargetListRow(
-                            target = target,
-                            trusted = trusted,
-                            trailing = {
-                                Column(
-                                    horizontalAlignment = Alignment.End,
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    StatusBadge(if (trusted) "Reachable" else "Needs fingerprint", if (trusted) MetricTone.Success else MetricTone.Warning)
-                                    FilledTonalButton(
-                                        onClick = {
-                                            editorIsDraft = false
-                                            editorTarget = target
-                                            onDetailActiveChange(true, closeEditor)
-                                            compactEditorOpen = true
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                                    ) {
-                                        Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Edit")
-                                    }
-                                }
-                            },
-                        )
-                    }
-                    if (state.targets.isEmpty()) {
+                if (state.targets.isEmpty()) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         item {
-                            EmptyActionRow("No targets yet", "Add target", Icons.Outlined.Add, addTarget)
+                            SectionHeader("Targets")
+                        }
+                        item {
+                            EmptyStateCard(
+                                icon = Icons.Outlined.Storage,
+                                title = "No targets yet",
+                                body = "Add a server target before creating backups that sync to SSH storage.",
+                                action = "Add target",
+                                onAction = addTarget,
+                                actionButtonTag = "targets-add-button",
+                            )
                         }
                     }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        item {
+                            SectionHeader("Targets")
+                        }
+                        items(state.targets, key = { it.id }) { target ->
+                            val trusted = state.trustedHostFingerprints.any {
+                                it.targetId == target.id || it.targetId == target.fingerprintGroupId
+                            }
+                            TargetListRow(
+                                target = target,
+                                trusted = trusted,
+                                trailing = {
+                                    Column(
+                                        horizontalAlignment = Alignment.End,
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        StatusBadge(if (trusted) "Reachable" else "Needs fingerprint", if (trusted) MetricTone.Success else MetricTone.Warning)
+                                        FilledTonalButton(
+                                            onClick = {
+                                                editorIsDraft = false
+                                                editorTarget = target
+                                                onDetailActiveChange(true, closeEditor)
+                                                compactEditorOpen = true
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                        ) {
+                                            Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Edit")
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    ExtendedFloatingActionButton(
+                        onClick = addTarget,
+                        icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                        text = { Text("Add target") },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .imePadding()
+                            .padding(16.dp)
+                            .testTag("targets-add-button"),
+                    )
                 }
-                ExtendedFloatingActionButton(
-                    onClick = addTarget,
-                    icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                    text = { Text("Add target") },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .imePadding()
-                        .padding(16.dp)
-                        .testTag("targets-add-button"),
-                )
             }
         }
+    }
+}
+
+private fun targetDeleteWarningText(target: TargetRecord, dependentProfileCount: Int): String {
+    val targetName = target.name.trim().ifBlank { "this target" }
+    return if (dependentProfileCount == 0) {
+        "This removes $targetName and its saved SSH trust records. This cannot be undone."
+    } else {
+        "This removes $targetName, ${profileCountLabel(dependentProfileCount)} that use it, and related schedules. This cannot be undone."
     }
 }
 
@@ -2634,10 +2887,12 @@ private fun TargetEditor(
     repository: AppRepository,
     secretStore: SecretStore,
     onSave: (TargetRecord) -> Unit,
+    onDelete: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
     onBackHandlerChange: ((() -> Unit)?) -> Unit,
     isDraft: Boolean,
     cancelLabel: String = "Back",
+    deleteWarningText: String = "This target will be removed. This cannot be undone.",
     showEditorHeader: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
@@ -2646,6 +2901,7 @@ private fun TargetEditor(
     var editing by remember(target.id, target) { mutableStateOf(target) }
     var showUnsavedPrompt by rememberSaveable(target.id) { mutableStateOf(false) }
     var portText by rememberSaveable(target.id) { mutableStateOf(target.port.toString()) }
+    var showDeletePrompt by rememberSaveable(target.id) { mutableStateOf(false) }
     val portIsValid = portFromText(portText) != null
     var connectBusy by rememberSaveable(target.id) { mutableStateOf(false) }
     var connectMessage by rememberSaveable(target.id) { mutableStateOf<String?>(null) }
@@ -2761,6 +3017,19 @@ private fun TargetEditor(
         )
     }
 
+    if (showDeletePrompt) {
+        DeleteConfirmationDialog(
+            title = "Delete target?",
+            message = deleteWarningText,
+            confirmLabel = "Delete",
+            onConfirm = {
+                showDeletePrompt = false
+                onDelete?.invoke()
+            },
+            onDismiss = { showDeletePrompt = false },
+        )
+    }
+
     pendingPasswordSetup?.let { pending ->
         AlertDialog(
             onDismissRequest = {
@@ -2866,6 +3135,10 @@ private fun TargetEditor(
                 saveEnabled = canConnect,
                 saveButtonTag = "target-save-button",
                 saveLabel = if (connectBusy) "Connecting" else "Connect",
+                onSecondaryAction = onDelete?.let { { showDeletePrompt = true } },
+                secondaryActionLabel = "Delete".takeIf { onDelete != null },
+                secondaryActionIcon = Icons.Outlined.Delete.takeIf { onDelete != null },
+                secondaryActionEnabled = !connectBusy,
             )
         }
         Column(
@@ -3074,7 +3347,11 @@ private fun SshKeysScreen(state: AppState, repository: AppRepository, secretStor
         ?: state.sshKeySettings.customPrivateKeyLabel
         ?: state.sshKeySettings.keyType
     val generateKey: () -> Unit = {
-        runCatching { SshKeyManager(secretStore).generateEd25519() }
+        runCatching {
+            SshKeyManager(secretStore).generateEd25519(
+                keyName = suggestedSshKeyName(state.settings.phoneHostname),
+            )
+        }
             .onSuccess { key ->
                 repository.update { appState ->
                     appState.copy(
@@ -3890,34 +4167,202 @@ private fun unsuccessfulLogLastOutput(log: BackupLog): String? {
         .lastOrNull()
 }
 
+private data class ConfigurationImportResult(
+    val state: AppState,
+    val message: String,
+)
+
+private fun configurationExportText(
+    state: AppState,
+    secretStore: SecretStore,
+    privateKeyPassword: String? = null,
+): String {
+    val encryptedPrivateKey = privateKeyPassword?.let { password ->
+        val keySettings = state.sshKeySettings
+        val privateKeyAlias = keySettings.privateKeySecretAlias
+            ?: error("No SSH private key is configured")
+        val privateKeyBytes = secretStore.get(privateKeyAlias)
+            ?: error("SSH private key is missing from secure storage")
+        val passphrase = keySettings.passphraseSecretAlias?.let { alias ->
+            secretStore.get(alias)?.toString(Charsets.UTF_8)
+                ?: error("SSH private key passphrase is missing from secure storage")
+        }
+        SshPrivateKeyExportCrypto.encrypt(
+            payload = SshPrivateKeyExportPayload(
+                publicKey = keySettings.publicKey,
+                privateKeyPem = SshRuntimeFiles.privateKeyText(privateKeyBytes),
+                passphrase = passphrase,
+            ),
+            password = password,
+        )
+    }
+    return ExportCodec.encode(state.toExportDocument(sshPrivateKey = encryptedPrivateKey))
+}
+
+private fun importedConfigurationState(
+    currentState: AppState,
+    document: ExportDocument,
+    secretStore: SecretStore,
+    privateKeyPassword: String,
+): ConfigurationImportResult {
+    val importedState = currentState.withImportedConfiguration(document)
+    val encryptedPrivateKey = document.sshPrivateKey
+        ?: return ConfigurationImportResult(importedState, "Configuration imported")
+
+    if (privateKeyPassword.isBlank()) {
+        return ConfigurationImportResult(
+            state = importedState,
+            message = "Configuration imported without the private key",
+        )
+    }
+
+    val payload = SshPrivateKeyExportCrypto.decrypt(encryptedPrivateKey, privateKeyPassword)
+    val publicKey = payload.publicKey ?: document.sshPublicKey
+    require(!publicKey.isNullOrBlank()) { "Private key export is missing its public key" }
+
+    secretStore.put(IMPORTED_SSH_PRIVATE_KEY_ALIAS, payload.privateKeyPem.toByteArray(Charsets.UTF_8))
+    if (payload.passphrase.isNullOrBlank()) {
+        secretStore.delete(IMPORTED_SSH_PASSPHRASE_ALIAS)
+    } else {
+        secretStore.put(IMPORTED_SSH_PASSPHRASE_ALIAS, payload.passphrase.toByteArray(Charsets.UTF_8))
+    }
+
+    return ConfigurationImportResult(
+        state = importedState.copy(
+            sshKeySettings = GlobalSshKeySettings(
+                publicKey = publicKey,
+                privateKeySecretAlias = IMPORTED_SSH_PRIVATE_KEY_ALIAS,
+                customPrivateKeyLabel = "Imported key",
+                passphraseSecretAlias = IMPORTED_SSH_PASSPHRASE_ALIAS.takeIf { !payload.passphrase.isNullOrBlank() },
+                generatedAt = Instant.now().toString(),
+            ),
+        ),
+        message = "Configuration and private key imported",
+    )
+}
+
 @Composable
 private fun SettingsScreen(
     state: AppState,
     permissions: com.ttv20.rsyncbackup.permissions.AppPermissionState,
     repository: AppRepository,
+    secretStore: SecretStore,
     onRefreshPermissions: () -> Unit,
     onSelectScreen: (Screen) -> Unit,
     onStartOnboarding: (OnboardingStep) -> Unit,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
     var settings by remember(state.settings) { mutableStateOf(state.settings) }
     var importText by rememberSaveable { mutableStateOf("") }
+    var importPrivateKeyPassword by remember { mutableStateOf("") }
     var importError by rememberSaveable { mutableStateOf<String?>(null) }
+    var importMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var importBusy by remember { mutableStateOf(false) }
     var exportMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var exportError by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingExportAction by remember { mutableStateOf<SettingsExportAction?>(null) }
+    var pendingSaveExportText by remember { mutableStateOf<String?>(null) }
+    var privateKeyExportPassword by remember { mutableStateOf("") }
+    var privateKeyExportPasswordConfirmation by remember { mutableStateOf("") }
+    var privateKeyExportError by remember { mutableStateOf<String?>(null) }
+    var exportBusy by remember { mutableStateOf(false) }
+    val hasExportablePrivateKey = state.sshKeySettings.privateKeySecretAlias != null
     val exportText = remember(state) { ExportCodec.encode(state.toExportDocument()) }
+    val importHasPrivateKey = remember(importText) {
+        runCatching { ExportCodec.decode(importText).sshPrivateKey != null }.getOrDefault(false)
+    }
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+        if (uri == null) {
+            pendingSaveExportText = null
+            return@rememberLauncherForActivityResult
+        }
+        val text = pendingSaveExportText ?: exportText
         runCatching {
             context.contentResolver.openOutputStream(uri)?.use { output ->
-                output.write(exportText.toByteArray(Charsets.UTF_8))
+                output.write(text.toByteArray(Charsets.UTF_8))
             } ?: error("Could not open export file")
         }.onSuccess {
             exportMessage = "Configuration saved"
+            exportError = null
         }.onFailure {
-            exportMessage = it.message ?: "Configuration save failed"
+            exportMessage = null
+            exportError = it.message ?: "Configuration save failed"
+        }
+        pendingSaveExportText = null
+    }
+
+    fun resetPrivateKeyExportDialog() {
+        pendingExportAction = null
+        privateKeyExportPassword = ""
+        privateKeyExportPasswordConfirmation = ""
+        privateKeyExportError = null
+        exportBusy = false
+    }
+
+    fun completeExport(action: SettingsExportAction, text: String, message: String) {
+        when (action) {
+            SettingsExportAction.Copy -> {
+                clipboard.setText(AnnotatedString(text))
+                exportMessage = message
+            }
+            SettingsExportAction.Save -> {
+                pendingSaveExportText = text
+                exportLauncher.launch("pocketbackup-config.json")
+            }
+        }
+        exportError = null
+    }
+
+    fun exportConfiguration(action: SettingsExportAction, privateKeyPassword: String? = null) {
+        exportBusy = true
+        exportError = null
+        privateKeyExportError = null
+        scope.launch {
+            val result = withContext(Dispatchers.Default) {
+                runCatching {
+                    configurationExportText(
+                        state = state,
+                        secretStore = secretStore,
+                        privateKeyPassword = privateKeyPassword,
+                    )
+                }
+            }
+            result.onSuccess { text ->
+                val includesPrivateKey = privateKeyPassword != null
+                completeExport(
+                    action = action,
+                    text = text,
+                    message = if (includesPrivateKey) {
+                        "Configuration copied with password-protected private key"
+                    } else {
+                        "Configuration copied"
+                    },
+                )
+                resetPrivateKeyExportDialog()
+            }.onFailure {
+                val message = it.message ?: "Configuration export failed"
+                if (pendingExportAction == null) {
+                    exportError = message
+                } else {
+                    privateKeyExportError = message
+                }
+                exportBusy = false
+            }
+        }
+    }
+
+    fun requestExport(action: SettingsExportAction) {
+        if (hasExportablePrivateKey) {
+            pendingExportAction = action
+            privateKeyExportPassword = ""
+            privateKeyExportPasswordConfirmation = ""
+            privateKeyExportError = null
+        } else {
+            exportConfiguration(action)
         }
     }
 
@@ -3966,10 +4411,7 @@ private fun SettingsScreen(
             Text("Export", style = MaterialTheme.typography.titleMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    onClick = {
-                        clipboard.setText(AnnotatedString(exportText))
-                        exportMessage = "Configuration copied"
-                    },
+                    onClick = { requestExport(SettingsExportAction.Copy) },
                     modifier = Modifier.testTag("settings-export-copy-button"),
                 ) {
                     Icon(Icons.Outlined.ContentCopy, contentDescription = null)
@@ -3977,7 +4419,7 @@ private fun SettingsScreen(
                     Text("Copy")
                 }
                 OutlinedButton(
-                    onClick = { exportLauncher.launch("pocketbackup-config.json") },
+                    onClick = { requestExport(SettingsExportAction.Save) },
                     modifier = Modifier.testTag("settings-export-save-button"),
                 ) {
                     Icon(Icons.Outlined.Save, contentDescription = null)
@@ -3986,25 +4428,138 @@ private fun SettingsScreen(
                 }
             }
             exportMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            exportError?.let { ErrorText(it) }
         }
         SectionCard {
             Text("Import", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(importText, { importText = it }, label = { Text("Configuration JSON") }, minLines = 6, modifier = Modifier.fillMaxWidth())
-            Button(onClick = {
-                runCatching { ExportCodec.decode(importText) }
-                    .onSuccess {
-                        repository.importConfiguration(it)
-                        importText = ""
-                        importError = null
+            if (importHasPrivateKey) {
+                Text(
+                    "This export contains a password-protected SSH private key. Leave the password blank to import only the non-secret configuration.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    importPrivateKeyPassword,
+                    { importPrivateKeyPassword = it },
+                    label = { Text("Private key export password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Button(
+                enabled = importText.isNotBlank() && !importBusy,
+                onClick = {
+                    importBusy = true
+                    importError = null
+                    importMessage = null
+                    val text = importText
+                    val privateKeyPassword = importPrivateKeyPassword
+                    scope.launch {
+                        val result = withContext(Dispatchers.Default) {
+                            runCatching {
+                                val document = ExportCodec.decode(text)
+                                importedConfigurationState(
+                                    currentState = state,
+                                    document = document,
+                                    secretStore = secretStore,
+                                    privateKeyPassword = privateKeyPassword,
+                                )
+                            }
+                        }
+                        result.onSuccess { importResult ->
+                            repository.update { importResult.state }
+                            importText = ""
+                            importPrivateKeyPassword = ""
+                            importError = null
+                            importMessage = importResult.message
+                        }.onFailure {
+                            importMessage = null
+                            importError = it.message
+                        }
+                        importBusy = false
                     }
-                    .onFailure { importError = it.message }
-            }) {
+                },
+            ) {
                 Icon(Icons.Outlined.UploadFile, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Import")
+                Text(if (importBusy) "Importing" else "Import")
             }
+            importMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             importError?.let { ErrorText(it) }
         }
+    }
+
+    pendingExportAction?.let { action ->
+        val passwordsMatch = privateKeyExportPassword == privateKeyExportPasswordConfirmation
+        AlertDialog(
+            onDismissRequest = {
+                if (!exportBusy) resetPrivateKeyExportDialog()
+            },
+            icon = { Icon(Icons.Outlined.Warning, contentDescription = null) },
+            title = { Text("Do you want me to export the private key or not?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "The private key lets this app sign in to your backup server. Exporting it is risky: anyone who gets it and its password can use that access. The normal export leaves it out.",
+                    )
+                    OutlinedTextField(
+                        privateKeyExportPassword,
+                        { privateKeyExportPassword = it },
+                        label = { Text("Private key export password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        privateKeyExportPasswordConfirmation,
+                        { privateKeyExportPasswordConfirmation = it },
+                        label = { Text("Confirm password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (!passwordsMatch) {
+                        Text(
+                            "Passwords do not match.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    privateKeyExportError?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !exportBusy && privateKeyExportPassword.isNotBlank() && passwordsMatch,
+                    onClick = { exportConfiguration(action, privateKeyExportPassword) },
+                ) {
+                    Text(if (exportBusy) "Exporting" else "Include private key")
+                }
+            },
+            dismissButton = {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        enabled = !exportBusy,
+                        onClick = { exportConfiguration(action) },
+                    ) {
+                        Text("Without private key")
+                    }
+                    TextButton(
+                        enabled = !exportBusy,
+                        onClick = { resetPrivateKeyExportDialog() },
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -4065,7 +4620,7 @@ private fun CommandPreview(state: AppState, profile: BackupProfile) {
         else -> Route.LAN
     }
     val preview = runCatching {
-        RsyncCommandBuilder.build(
+        val backupCommand = RsyncCommandBuilder.build(
             profile = profile,
             target = target,
             route = route,
@@ -4076,6 +4631,23 @@ private fun CommandPreview(state: AppState, profile: BackupProfile) {
             tailscaleStateDir = "files/tailscale-state",
             tailscaleNodeName = state.tailscale.nodeName,
         ).preview
+        if (!profile.dryRunBeforeBackup) {
+            backupCommand
+        } else {
+            val dryRunCommand = RsyncCommandBuilder.build(
+                profile = profile,
+                target = target,
+                route = route,
+                binaryPaths = BinaryPaths("rsync", "ssh", "tsnet-nc"),
+                sshKeyPath = "files/ssh/id_ed25519",
+                knownHostsPath = "files/ssh/known_hosts",
+                excludesPath = "files/run/${profile.id}/excludes",
+                tailscaleStateDir = "files/tailscale-state",
+                tailscaleNodeName = state.tailscale.nodeName,
+                dryRun = true,
+            ).preview
+            "Dry run:\n$dryRunCommand\n\nBackup:\n$backupCommand"
+        }
     }.getOrElse { it.message ?: "Invalid command" }
     SectionCard {
         Text("Command preview", style = MaterialTheme.typography.titleMedium)
@@ -4608,26 +5180,241 @@ private fun routeLabel(route: Route): String =
     }
 
 @Composable
+private fun ExcludesSummaryRow(
+    value: String,
+    onOpen: () -> Unit,
+) {
+    val count = excludeRuleCount(value)
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text("Excludes", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    excludeCountLabel(count),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(onClick = onOpen) {
+                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Add excluded")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExcludesEditorDialog(
+    value: String,
+    onSave: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var draft by remember(value) { mutableStateOf(value) }
+    Dialog(
+        onDismissRequest = onCancel,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp)
+                .imePadding(),
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Excludes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            excludeCountLabel(excludeRuleCount(draft)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = onCancel) {
+                        Text("Cancel")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { onSave(draft.trimEnd()) }) {
+                        Text("Save")
+                    }
+                }
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    label = { Text("Exclude patterns") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                )
+            }
+        }
+    }
+}
+
+private fun excludeRuleCount(value: String): Int =
+    value.lineSequence()
+        .map { it.trim() }
+        .count { it.isNotEmpty() && !it.startsWith("#") }
+
+private fun excludeCountLabel(count: Int): String =
+    "$count ${if (count == 1) "exclude" else "excludes"}"
+
+private fun orderedScheduleDays(locale: Locale = Locale.getDefault()): List<DayOfWeek> {
+    val firstDay = WeekFields.of(locale).firstDayOfWeek
+    return (0L..6L).map { firstDay.plus(it) }
+}
+
+private fun scheduleDayLabel(day: DayOfWeek, locale: Locale = Locale.getDefault()): String =
+    day.getDisplayName(TextStyle.SHORT, locale)
+
+private fun weeklyScheduleSummary(days: List<Int>, locale: Locale = Locale.getDefault()): String {
+    val selectedDays = normalizedScheduleWeekDays(days)
+    if (selectedDays.isEmpty()) return "no days"
+    if (selectedDays.size == 7) return "all days"
+    return orderedScheduleDays(locale)
+        .filter { it.value in selectedDays }
+        .joinToString(", ") { scheduleDayLabel(it, locale) }
+}
+
+@Composable
 private fun ScheduleEditor(schedule: BackupSchedule, onChange: (BackupSchedule) -> Unit) {
+    val context = LocalContext.current
+    val locale = Locale.getDefault()
+    val dailySelected = schedule.type == ScheduleType.EXACT_DAILY || schedule.type == ScheduleType.BEST_EFFORT_DAILY
+    val weeklyDays = normalizedScheduleWeekDays(schedule.weeklyDays)
     Selector {
-        FilterChip(
+        ScheduleChoiceButton(
             selected = schedule.type == ScheduleType.DISABLED,
             onClick = { onChange(schedule.copy(type = ScheduleType.DISABLED)) },
-            label = { Text("disabled") },
+            label = "Disabled",
         )
-        FilterChip(
-            selected = schedule.type != ScheduleType.DISABLED,
+        ScheduleChoiceButton(
+            selected = dailySelected,
             onClick = { onChange(schedule.copy(type = ScheduleType.EXACT_DAILY)) },
-            label = { Text("daily") },
+            label = "Daily",
+        )
+        ScheduleChoiceButton(
+            selected = schedule.type == ScheduleType.WEEKLY,
+            onClick = {
+                onChange(
+                    schedule.copy(
+                        type = ScheduleType.WEEKLY,
+                        weeklyDays = weeklyDays.ifEmpty { allScheduleWeekDays() },
+                    ),
+                )
+            },
+            label = "Weekly",
         )
     }
-    OutlinedTextField(
-        value = schedule.timeLocal,
-        onValueChange = { onChange(schedule.copy(timeLocal = it)) },
-        label = { Text("Local time") },
+    if (schedule.type == ScheduleType.WEEKLY) {
+        val selectedDays = weeklyDays.ifEmpty { allScheduleWeekDays() }
+        Selector {
+            orderedScheduleDays(locale).forEach { day ->
+                val dayValue = day.value
+                FilterChip(
+                    selected = dayValue in selectedDays,
+                    onClick = {
+                        val nextDays = if (dayValue in selectedDays) {
+                            selectedDays - dayValue
+                        } else {
+                            selectedDays + dayValue
+                        }
+                        if (nextDays.isNotEmpty()) {
+                            onChange(schedule.copy(weeklyDays = normalizedScheduleWeekDays(nextDays)))
+                        }
+                    },
+                    label = { Text(scheduleDayLabel(day, locale)) },
+                )
+            }
+        }
+    }
+    OutlinedButton(
+        onClick = {
+            showScheduleTimePicker(context, schedule.timeLocal) { selectedTime ->
+                val nextType = if (schedule.type == ScheduleType.DISABLED) ScheduleType.EXACT_DAILY else schedule.type
+                onChange(
+                    schedule.copy(
+                        type = nextType,
+                        timeLocal = selectedTime,
+                        weeklyDays = if (nextType == ScheduleType.WEEKLY) {
+                            weeklyDays.ifEmpty { allScheduleWeekDays() }
+                        } else {
+                            schedule.weeklyDays
+                        },
+                    ),
+                )
+            }
+        },
         modifier = Modifier.fillMaxWidth(),
-    )
+    ) {
+        Icon(Icons.Outlined.Schedule, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Schedule time ${normalizedScheduleTime(schedule.timeLocal)}")
+    }
 }
+
+@Composable
+private fun ScheduleChoiceButton(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    if (selected) {
+        Button(onClick = onClick) {
+            Text(label)
+        }
+    } else {
+        OutlinedButton(onClick = onClick) {
+            Text(label)
+        }
+    }
+}
+
+private fun showScheduleTimePicker(
+    context: Context,
+    timeLocal: String,
+    onTimeSelected: (String) -> Unit,
+) {
+    val currentTime = parsedScheduleTime(timeLocal)
+    TimePickerDialog(
+        context,
+        { _, hourOfDay, minute ->
+            onTimeSelected(formatScheduleTime(hourOfDay, minute))
+        },
+        currentTime.hour,
+        currentTime.minute,
+        DateFormat.is24HourFormat(context),
+    ).show()
+}
+
+private fun parsedScheduleTime(timeLocal: String): LocalTime =
+    runCatching { LocalTime.parse(timeLocal) }.getOrDefault(LocalTime.of(3, 0))
+
+private fun normalizedScheduleTime(timeLocal: String): String {
+    val time = parsedScheduleTime(timeLocal)
+    return formatScheduleTime(time.hour, time.minute)
+}
+
+private fun formatScheduleTime(hour: Int, minute: Int): String =
+    "%02d:%02d".format(Locale.US, hour, minute)
 
 @Composable
 private fun PrimaryConstraintEditor(constraints: ConstraintSettings, onChange: (ConstraintSettings) -> Unit) {
@@ -4738,6 +5525,26 @@ private fun ToggleRow(
             onCheckedChange = onChange,
             modifier = switchTag?.let { Modifier.testTag(it) } ?: Modifier,
         )
+    }
+}
+
+@Composable
+private fun ToggleDetailRow(
+    title: String,
+    detail: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
@@ -4908,6 +5715,7 @@ private fun phaseLabel(phase: RunProgressPhase): String =
 private fun RunProgressPhase.hasActiveMotion(): Boolean =
     when (this) {
         RunProgressPhase.PREPARING,
+        RunProgressPhase.DRY_RUN,
         RunProgressPhase.RUNNING_RSYNC,
         RunProgressPhase.UPLOADING_STATUS,
         RunProgressPhase.CANCELLING,
@@ -4954,6 +5762,7 @@ private fun RunProgressPhase.notificationLabel(): String =
     when (this) {
         RunProgressPhase.IDLE -> "Waiting"
         RunProgressPhase.PREPARING -> "Preparing backup"
+        RunProgressPhase.DRY_RUN -> "Estimating transfer size"
         RunProgressPhase.RUNNING_RSYNC -> "Running rsync"
         RunProgressPhase.UPLOADING_STATUS -> "Uploading backup status"
         RunProgressPhase.CANCELLING -> "Cancelling backup"

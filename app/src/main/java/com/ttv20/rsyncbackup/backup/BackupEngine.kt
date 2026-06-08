@@ -12,6 +12,7 @@ import com.ttv20.rsyncbackup.model.requiresTailscale
 import com.ttv20.rsyncbackup.model.resolvedSshKeySettings
 import com.ttv20.rsyncbackup.model.routeOrder
 import com.ttv20.rsyncbackup.model.toJson
+import com.ttv20.rsyncbackup.model.transferProgressPercent
 import com.ttv20.rsyncbackup.storage.AppRepository
 import com.ttv20.rsyncbackup.storage.SecretStore
 import com.ttv20.rsyncbackup.tailscale.TailscaleManager
@@ -20,6 +21,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.Instant
 import java.util.UUID
+
+private const val RSYNC_PROGRESS_UPDATE_INTERVAL_MILLIS = 1_000L
 
 class BackupEngine(
     private val context: Context,
@@ -119,6 +122,8 @@ class BackupEngine(
             val commandInputs = writeCommandInputs(profile, privateKeyBytes, passphraseBytes, knownHostsText)
             val output = StringBuilder()
             var lastRsyncProgressLine: String? = null
+            var plannedTransferBytesRaw: Long? = null
+            var lastRsyncProgressUpdateMillis = 0L
 
             fun recordLine(line: String) {
                 output.appendLine(line)
@@ -143,7 +148,22 @@ class BackupEngine(
                 message: String,
                 progress: RsyncProgress = RsyncProgress(),
                 persist: Boolean = false,
+                force: Boolean = true,
             ) {
+                val isRsyncProgressPhase = phase == RunProgressPhase.DRY_RUN || phase == RunProgressPhase.RUNNING_RSYNC
+                val nowMillis = System.nanoTime() / 1_000_000L
+                if (
+                    isRsyncProgressPhase &&
+                    !persist &&
+                    !force &&
+                    lastRsyncProgressUpdateMillis != 0L &&
+                    nowMillis - lastRsyncProgressUpdateMillis < RSYNC_PROGRESS_UPDATE_INTERVAL_MILLIS
+                ) {
+                    return
+                }
+                if (isRsyncProgressPhase) {
+                    lastRsyncProgressUpdateMillis = nowMillis
+                }
                 val now = Instant.now().toString()
                 repository.setRunProgress(
                     RunProgressState(
@@ -155,12 +175,16 @@ class BackupEngine(
                         updatedAt = now,
                         filesDiscovered = progress.filesDiscovered,
                         filesTransferred = progress.filesTransferred,
-                        progressPercent = progress.progressPercent,
+                        progressPercent = transferProgressPercent(
+                            bytesTransferredRaw = progress.bytesTransferredRaw,
+                            plannedTransferBytesRaw = plannedTransferBytesRaw,
+                        ) ?: progress.progressPercent,
                         bytesTransferred = progress.bytesTransferred,
                         bytesTransferredRaw = progress.bytesTransferredRaw,
+                        plannedTransferBytesRaw = plannedTransferBytesRaw,
                         speed = progress.speed,
                         averageBytesPerSecond = progress.averageBytesPerSecond,
-                        recentAverageBytesPerSecond = progress.averageBytesPerSecond,
+                        recentAverageBytesPerSecond = progress.recentAverageBytesPerSecond,
                         duration = progress.duration,
                         currentFile = progress.currentFile,
                         finalStats = progress.finalStats,
@@ -266,147 +290,214 @@ class BackupEngine(
                 raw = output.toString(),
             )
             val connection = routeConnection(route, selectedTailscaleForward)
-            val command = buildRsyncCommand(profile, target, route, nativeInstall.paths, commandInputs, selectedTailscaleForward)
+            val command = buildRsyncCommand(
+                profile,
+                target,
+                route,
+                nativeInstall.paths,
+                commandInputs,
+                selectedTailscaleForward,
+            )
 
-        updateProgress(RunProgressPhase.PREPARING, "Checking remote target")
-        val prepareResult = runCommand(RemoteTargetCommands.prepareTarget(profile, connection), commandInputs.askpassPath) { line ->
-            recordLine(line)
+            fun uploadCompletionArtifacts(
+                status: RunStatus,
+                exitCode: Int,
+                finishedAt: String,
+                summary: String,
+                progress: RsyncProgress,
+            ): BackupLog? {
+                updateProgress(RunProgressPhase.UPLOADING_STATUS, "Uploading backup status", progress)
+                val statusJson = BackupStatusMarker(
+                    profileId = profile.id,
+                    profileName = profile.name,
+                    phoneHostname = state.settings.phoneHostname,
+                    appVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0",
+                    sourcePath = profile.sourcePath,
+                    targetHostUsed = command.targetHost,
+                    targetMode = profile.targetMode,
+                    status = status.name.lowercase(),
+                    finishTime = finishedAt,
+                    rsyncExitCode = exitCode,
+                ).toJson()
+                val uploadStatusResult = runCommand(
+                    RemoteTargetCommands.uploadStatus(profile, connection, statusJson),
+                    commandInputs.askpassPath,
+                ) { line ->
+                    recordLine(line)
+                    updateProgress(RunProgressPhase.UPLOADING_STATUS, "Uploading backup status", progress)
+                }
+                uploadStatusResult.stopReason?.let { return cancelledLog(it, command.targetHost) }
+                if ((uploadStatusResult.exitCode ?: -1) != 0) {
+                    return failedLog(
+                        summary = "Backup completed but status upload failed with exit ${uploadStatusResult.exitCode ?: -1}",
+                        raw = output.toString(),
+                        targetHostUsed = command.targetHost,
+                    )
+                }
+                val uploadLogResult = runCommand(
+                    RemoteTargetCommands.uploadLastLog(profile, connection, finalRaw(summary)),
+                    commandInputs.askpassPath,
+                ) { line ->
+                    recordLine(line)
+                    updateProgress(RunProgressPhase.UPLOADING_STATUS, "Uploading backup log", progress)
+                }
+                uploadLogResult.stopReason?.let { return cancelledLog(it, command.targetHost) }
+                if ((uploadLogResult.exitCode ?: -1) != 0) {
+                    return failedLog(
+                        summary = "Backup completed but log upload failed with exit ${uploadLogResult.exitCode ?: -1}",
+                        raw = output.toString(),
+                        targetHostUsed = command.targetHost,
+                    )
+                }
+                return null
+            }
+
+            fun completeRun(
+                status: RunStatus,
+                exitCode: Int,
+                summary: String,
+                progress: RsyncProgress,
+            ): BackupLog {
+                val finishedAt = Instant.now().toString()
+                if (status == RunStatus.SUCCESS || status == RunStatus.WARNING) {
+                    uploadCompletionArtifacts(status, exitCode, finishedAt, summary, progress)?.let { return it }
+                }
+                val raw = finalRaw(summary)
+                val log = BackupLog(
+                    id = UUID.randomUUID().toString(),
+                    profileId = profile.id,
+                    profileName = profile.name,
+                    startedAt = startedAt,
+                    finishedAt = finishedAt,
+                    status = status,
+                    trigger = trigger,
+                    endReason = if (status == RunStatus.FAILED) {
+                        errorBackupEndReason(summary, raw)
+                    } else {
+                        null
+                    },
+                    endReasonDetail = if (status == RunStatus.FAILED) summary else null,
+                    exitCode = exitCode,
+                    targetHostUsed = command.targetHost,
+                    summary = summary,
+                    raw = raw,
+                )
+                updateProgress(
+                    phase = if (status == RunStatus.FAILED) RunProgressPhase.FAILED else RunProgressPhase.COMPLETED,
+                    message = summary,
+                    progress = progress,
+                    persist = true,
+                )
+                repository.appendLog(log)
+                repository.markProfile(profile.id, status, summary, finishedAt)
+                return log
+            }
+
             updateProgress(RunProgressPhase.PREPARING, "Checking remote target")
-        }
-        prepareResult.stopReason?.let { return@withContext cancelledLog(it, command.targetHost) }
-        val prepareExit = prepareResult.exitCode ?: -1
-        if (prepareExit != 0) {
-            val summary = when (prepareExit) {
-                21 -> "Remote target exists but is not a directory"
-                22 -> "Remote target directory is missing"
-                23 -> "Remote target is non-empty and unmarked"
-                else -> "Remote target safety check failed with exit $prepareExit"
-            }
-            val finishedAt = Instant.now().toString()
-            val log = BackupLog(
-                id = UUID.randomUUID().toString(),
-                profileId = profile.id,
-                profileName = profile.name,
-                startedAt = startedAt,
-                finishedAt = finishedAt,
-                status = RunStatus.FAILED,
-                trigger = trigger,
-                endReason = errorBackupEndReason(summary, output.toString()),
-                endReasonDetail = summary,
-                targetHostUsed = command.targetHost,
-                summary = summary,
-                raw = output.toString(),
-            )
-            updateProgress(RunProgressPhase.FAILED, summary, persist = true)
-            repository.appendLog(log)
-            repository.markProfile(profile.id, RunStatus.FAILED, summary, finishedAt)
-            return@withContext log
-        }
-
-        val parser = RsyncOutputParser()
-        updateProgress(RunProgressPhase.RUNNING_RSYNC, "Running rsync")
-        val rsyncResult = runCommand(RemoteCommand(command.command), commandInputs.askpassPath) { line ->
-            val progress = parser.accept(line)
-            if (parser.isProgressLine(line)) {
-                lastRsyncProgressLine = line
-            } else {
+            val prepareResult = runCommand(RemoteTargetCommands.prepareTarget(profile, connection), commandInputs.askpassPath) { line ->
                 recordLine(line)
+                updateProgress(RunProgressPhase.PREPARING, "Checking remote target")
             }
-            updateProgress(
-                phase = RunProgressPhase.RUNNING_RSYNC,
-                message = "Running rsync",
-                progress = progress,
-            )
-        }
-        rsyncResult.stopReason?.let { return@withContext cancelledLog(it, command.targetHost) }
-        val exitCode = rsyncResult.exitCode ?: -1
-        val status = when (exitCode) {
-            0 -> RunStatus.SUCCESS
-            24 -> RunStatus.WARNING
-            else -> RunStatus.FAILED
-        }
-        val summary = when (status) {
-            RunStatus.SUCCESS -> "Backup completed"
-            RunStatus.WARNING -> "Backup completed with accepted rsync warning 24"
-            else -> "Backup failed with rsync exit $exitCode"
-        }
-        val finishedAt = Instant.now().toString()
-
-        if (status == RunStatus.SUCCESS || status == RunStatus.WARNING) {
-            updateProgress(RunProgressPhase.UPLOADING_STATUS, "Uploading backup status", parser.snapshot())
-            val statusJson = BackupStatusMarker(
-                profileId = profile.id,
-                profileName = profile.name,
-                phoneHostname = state.settings.phoneHostname,
-                appVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0",
-                sourcePath = profile.sourcePath,
-                targetHostUsed = command.targetHost,
-                targetMode = profile.targetMode,
-                status = status.name.lowercase(),
-                finishTime = finishedAt,
-                rsyncExitCode = exitCode,
-            ).toJson()
-            val uploadStatusResult = runCommand(
-                RemoteTargetCommands.uploadStatus(profile, connection, statusJson),
-                commandInputs.askpassPath,
-            ) { line ->
-                recordLine(line)
-                updateProgress(RunProgressPhase.UPLOADING_STATUS, "Uploading backup status", parser.snapshot())
-            }
-            uploadStatusResult.stopReason?.let { return@withContext cancelledLog(it, command.targetHost) }
-            if ((uploadStatusResult.exitCode ?: -1) != 0) {
+            prepareResult.stopReason?.let { return@withContext cancelledLog(it, command.targetHost) }
+            val prepareExit = prepareResult.exitCode ?: -1
+            if (prepareExit != 0) {
+                val summary = when (prepareExit) {
+                    21 -> "Remote target exists but is not a directory"
+                    22 -> "Remote target directory is missing"
+                    23 -> "Remote target is non-empty and unmarked"
+                    else -> "Remote target safety check failed with exit $prepareExit"
+                }
                 return@withContext failedLog(
-                    summary = "Backup completed but status upload failed with exit ${uploadStatusResult.exitCode ?: -1}",
+                    summary = summary,
                     raw = output.toString(),
                     targetHostUsed = command.targetHost,
                 )
             }
-            val uploadLogResult = runCommand(
-                RemoteTargetCommands.uploadLastLog(profile, connection, finalRaw(summary)),
-                commandInputs.askpassPath,
-            ) { line ->
-                recordLine(line)
-                updateProgress(RunProgressPhase.UPLOADING_STATUS, "Uploading backup log", parser.snapshot())
+
+            if (profile.dryRunBeforeBackup) {
+                val dryRunCommand = buildRsyncCommand(
+                    profile,
+                    target,
+                    route,
+                    nativeInstall.paths,
+                    commandInputs,
+                    selectedTailscaleForward,
+                    dryRun = true,
+                )
+                val dryRunParser = RsyncOutputParser()
+                updateProgress(RunProgressPhase.DRY_RUN, "Estimating transfer size")
+                val dryRunResult = runCommand(RemoteCommand(dryRunCommand.command), commandInputs.askpassPath) { line ->
+                    val progress = dryRunParser.accept(line)
+                    if (dryRunParser.isProgressLine(line)) {
+                        lastRsyncProgressLine = line
+                    } else {
+                        recordLine(line)
+                    }
+                    updateProgress(
+                        phase = RunProgressPhase.DRY_RUN,
+                        message = "Estimating transfer size",
+                        progress = progress,
+                        force = false,
+                    )
+                }
+                dryRunResult.stopReason?.let { return@withContext cancelledLog(it, command.targetHost) }
+                val dryRunExit = dryRunResult.exitCode ?: -1
+                if (dryRunExit != 0) {
+                    val summary = "Dry run failed with rsync exit $dryRunExit"
+                    return@withContext failedLog(summary, finalRaw(summary), command.targetHost)
+                }
+                val dryRunProgress = dryRunParser.snapshot()
+                val plannedBytes = dryRunProgress.bytesTransferredRaw
+                if (plannedBytes == null) {
+                    val summary = "Dry run did not report transfer size"
+                    return@withContext failedLog(summary, finalRaw(summary), command.targetHost)
+                }
+                plannedTransferBytesRaw = plannedBytes
+                recordLine("Dry run planned transfer: $plannedBytes bytes")
+                lastRsyncProgressLine = null
+                if (plannedBytes == 0L) {
+                    return@withContext completeRun(
+                        status = RunStatus.SUCCESS,
+                        exitCode = 0,
+                        summary = "Backup completed: no data to transfer",
+                        progress = dryRunProgress.copy(
+                            progressPercent = 100,
+                            bytesTransferred = "0 bytes",
+                            bytesTransferredRaw = 0L,
+                        ),
+                    )
+                }
             }
-            uploadLogResult.stopReason?.let { return@withContext cancelledLog(it, command.targetHost) }
-            if ((uploadLogResult.exitCode ?: -1) != 0) {
-                return@withContext failedLog(
-                    summary = "Backup completed but log upload failed with exit ${uploadLogResult.exitCode ?: -1}",
-                    raw = output.toString(),
-                    targetHostUsed = command.targetHost,
+
+            val parser = RsyncOutputParser()
+            updateProgress(RunProgressPhase.RUNNING_RSYNC, "Running rsync")
+            val rsyncResult = runCommand(RemoteCommand(command.command), commandInputs.askpassPath) { line ->
+                val progress = parser.accept(line)
+                if (parser.isProgressLine(line)) {
+                    lastRsyncProgressLine = line
+                } else {
+                    recordLine(line)
+                }
+                updateProgress(
+                    phase = RunProgressPhase.RUNNING_RSYNC,
+                    message = "Running rsync",
+                    progress = progress,
+                    force = false,
                 )
             }
-        }
-
-        val raw = finalRaw(summary)
-        val log = BackupLog(
-            id = UUID.randomUUID().toString(),
-            profileId = profile.id,
-            profileName = profile.name,
-            startedAt = startedAt,
-            finishedAt = finishedAt,
-            status = status,
-            trigger = trigger,
-            endReason = if (status == RunStatus.FAILED) {
-                errorBackupEndReason(summary, raw)
-            } else {
-                null
-            },
-            endReasonDetail = if (status == RunStatus.FAILED) summary else null,
-            exitCode = exitCode,
-            targetHostUsed = command.targetHost,
-            summary = summary,
-            raw = raw,
-        )
-        updateProgress(
-            phase = if (status == RunStatus.FAILED) RunProgressPhase.FAILED else RunProgressPhase.COMPLETED,
-            message = summary,
-            progress = parser.snapshot(),
-            persist = true,
-        )
-        repository.appendLog(log)
-        repository.markProfile(profile.id, status, summary, finishedAt)
-            log
+            rsyncResult.stopReason?.let { return@withContext cancelledLog(it, command.targetHost) }
+            val exitCode = rsyncResult.exitCode ?: -1
+            val status = when (exitCode) {
+                0 -> RunStatus.SUCCESS
+                24 -> RunStatus.WARNING
+                else -> RunStatus.FAILED
+            }
+            val summary = when (status) {
+                RunStatus.SUCCESS -> "Backup completed"
+                RunStatus.WARNING -> "Backup completed with accepted rsync warning 24"
+                else -> "Backup failed with rsync exit $exitCode"
+            }
+            completeRun(status, exitCode, summary, parser.snapshot())
         } finally {
             selectedTailscaleForward?.close()
             restoredTailscaleStateAlias?.let { alias ->
@@ -494,6 +585,7 @@ class BackupEngine(
         binaryPaths: BinaryPaths,
         inputs: BackupCommandInputs,
         forward: TailscaleTcpForward?,
+        dryRun: Boolean = false,
     ): RsyncCommand {
         return RsyncCommandBuilder.build(
             profile = profile,
@@ -509,6 +601,7 @@ class BackupEngine(
             connectHostOverride = forward?.host,
             connectPortOverride = forward?.port,
             hostKeyAlias = forward?.targetHost,
+            dryRun = dryRun,
         )
     }
 

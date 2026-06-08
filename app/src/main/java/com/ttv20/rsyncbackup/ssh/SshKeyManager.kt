@@ -2,6 +2,7 @@ package com.ttv20.rsyncbackup.ssh
 
 import com.ttv20.rsyncbackup.backup.NativeBinaryManager
 import com.ttv20.rsyncbackup.model.GlobalSshKeySettings
+import com.ttv20.rsyncbackup.model.publicKeyWithSshKeyName
 import com.ttv20.rsyncbackup.storage.SecretStore
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.File
@@ -19,9 +20,12 @@ data class GeneratedSshKey(
 )
 
 class SshKeyManager(private val secretStore: SecretStore) {
-    fun generateEd25519(alias: String = "ssh-private-key"): GeneratedSshKey {
+    fun generateEd25519(
+        alias: String = "ssh-private-key",
+        keyName: String = "android-phone-pocketbackup",
+    ): GeneratedSshKey {
         val keyPair = generateEd25519KeyPair()
-        val publicKey = opensshEd25519PublicKey(keyPair.public.encoded)
+        val publicKey = opensshEd25519PublicKey(keyPair.public.encoded, keyName)
         secretStore.put(alias, keyPair.private.encoded)
         return GeneratedSshKey(
             publicKey = publicKey,
@@ -95,7 +99,7 @@ class SshKeyManager(private val secretStore: SecretStore) {
             .generateKeyPair()
     }
 
-    private fun opensshEd25519PublicKey(spki: ByteArray): String {
+    private fun opensshEd25519PublicKey(spki: ByteArray, keyName: String): String {
         val rawKey = spki.takeLast(32).toByteArray()
         val type = "ssh-ed25519".toByteArray(Charsets.US_ASCII)
         val buffer = ByteBuffer.allocate(4 + type.size + 4 + rawKey.size)
@@ -104,7 +108,7 @@ class SshKeyManager(private val secretStore: SecretStore) {
         buffer.putInt(rawKey.size)
         buffer.put(rawKey)
         val encoded = Base64.getEncoder().encodeToString(buffer.array())
-        return "ssh-ed25519 $encoded android-rsync-backup"
+        return publicKeyWithSshKeyName("ssh-ed25519 $encoded", keyName)
     }
 }
 

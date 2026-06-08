@@ -3,6 +3,7 @@ package com.ttv20.rsyncbackup
 import android.app.Application
 import com.ttv20.rsyncbackup.backup.NativeBinaryManager
 import com.ttv20.rsyncbackup.model.GlobalSshKeySettings
+import com.ttv20.rsyncbackup.model.suggestedSshKeyName
 import com.ttv20.rsyncbackup.model.withDetectedPhoneHostname
 import com.ttv20.rsyncbackup.settings.DeviceHostnameReader
 import com.ttv20.rsyncbackup.ssh.SshKeyManager
@@ -26,22 +27,25 @@ class RsyncBackupApplication : Application() {
         secretStore = AndroidKeystoreSecretStore(this)
         repository = AppRepository(File(filesDir, "app-state.json"), defaultExcludes).also {
             it.loadBlocking()
-            ensureGlobalSshKey(it)
             DeviceHostnameReader.read(this)?.let { deviceHostname ->
                 it.update { state -> state.withDetectedPhoneHostname(deviceHostname) }
             }
+            ensureGlobalSshKey(it)
         }
         NativeBinaryManager(this).ensureInstalled()
     }
 
     private fun ensureGlobalSshKey(repository: AppRepository) {
-        val settings = repository.state.value.sshKeySettings
+        val state = repository.state.value
+        val settings = state.sshKeySettings
         val hasUsablePrivateKey = settings.privateKeySecretAlias
             ?.let { alias -> secretStore.get(alias) != null }
             ?: false
         if (hasUsablePrivateKey && settings.publicKey != null) return
 
-        val generated = SshKeyManager(secretStore).generateEd25519()
+        val generated = SshKeyManager(secretStore).generateEd25519(
+            keyName = suggestedSshKeyName(state.settings.phoneHostname),
+        )
         repository.update { state ->
             state.copy(
                 sshKeySettings = GlobalSshKeySettings(

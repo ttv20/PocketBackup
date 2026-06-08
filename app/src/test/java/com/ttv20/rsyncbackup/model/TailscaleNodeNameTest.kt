@@ -12,6 +12,43 @@ class TailscaleNodeNameTest {
     }
 
     @Test
+    fun suggestedSshKeyNameUsesPocketBackupSuffix() {
+        assertEquals("pixel-9-pro-pocketbackup", suggestedSshKeyName(" Pixel 9 Pro "))
+        assertEquals("tom-s-phone-pocketbackup", suggestedSshKeyName("Tom's Phone"))
+        assertEquals("android-phone-pocketbackup", suggestedSshKeyName("   "))
+    }
+
+    @Test
+    fun settingsUpdateRefreshesGeneratedSshKeyName() {
+        val state = InitialData.appState("cache/").copy(
+            sshKeySettings = GlobalSshKeySettings(
+                publicKey = "ssh-ed25519 AAAATEST old-name",
+                privateKeySecretAlias = "ssh-private-key",
+                generatedAt = "2026-06-08T00:00:00Z",
+            ),
+        )
+
+        val updated = state.withUpdatedSettings(state.settings.copy(phoneHostname = "Pixel 9 Pro"))
+
+        assertEquals("ssh-ed25519 AAAATEST pixel-9-pro-pocketbackup", updated.sshKeySettings.publicKey)
+    }
+
+    @Test
+    fun settingsUpdatePreservesCustomSshKeyName() {
+        val state = InitialData.appState("cache/").copy(
+            sshKeySettings = GlobalSshKeySettings(
+                publicKey = "ssh-ed25519 AAAATEST custom@example",
+                privateKeySecretAlias = "custom-ssh-private-key",
+                customPrivateKeyLabel = "Custom key",
+            ),
+        )
+
+        val updated = state.withUpdatedSettings(state.settings.copy(phoneHostname = "Pixel 9 Pro"))
+
+        assertEquals("ssh-ed25519 AAAATEST custom@example", updated.sshKeySettings.publicKey)
+    }
+
+    @Test
     fun detectedPhoneHostnameUpdatesDefaultTailscaleNodeName() {
         val state = InitialData.appState("cache/")
 

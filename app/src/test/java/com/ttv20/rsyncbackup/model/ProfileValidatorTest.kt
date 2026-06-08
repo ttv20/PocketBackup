@@ -43,6 +43,21 @@ class ProfileValidatorTest {
     }
 
     @Test
+    fun weeklyScheduleRequiresAtLeastOneDay() {
+        val state = configuredState()
+        val profile = state.profiles.first().copy(
+            schedule = BackupSchedule(
+                type = ScheduleType.WEEKLY,
+                weeklyDays = emptyList(),
+            ),
+        )
+
+        val issues = ProfileValidator.validate(profile, state)
+
+        assertTrue(issues.any { it.code == "weekly_days_missing" && it.severity == Severity.ERROR })
+    }
+
+    @Test
     fun lanModeRequiresLanHost() {
         val state = configuredState()
         val target = state.targets.first().copy(lanHost = "", tailscaleHost = "home-tailnet")
@@ -69,29 +84,6 @@ class ProfileValidatorTest {
 
         assertFalse(issues.any { it.code == "lan_host_missing" })
         assertFalse(issues.any { it.severity == Severity.ERROR })
-    }
-
-    @Test
-    fun defaultRemotePathDoesNotWarnOnSave() {
-        val state = configuredState()
-        val profile = state.profiles.first()
-
-        val warnings = ProfileValidator.saveWarnings(profile, state)
-
-        assertTrue(warnings.isEmpty())
-    }
-
-    @Test
-    fun broadDeleteEnabledRemotePathWarnsOnSave() {
-        val state = configuredState()
-        val profile = state.profiles.first().copy(
-            targetMode = TargetMode.LAN_ONLY,
-            remotePath = "/mnt",
-        )
-
-        val warnings = ProfileValidator.saveWarnings(profile, state)
-
-        assertTrue(warnings.any { it.code == "remote_path_broad_delete" })
     }
 
     private fun configuredState(): AppState {
