@@ -17,6 +17,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         applyRequestedScreen(intent)
         val app = application as RsyncBackupApplication
+        app.diagnostics.trackEvent("app_opened")
         setContent {
             val screenRequest = requestedScreen.value
             RsyncBackupApp(

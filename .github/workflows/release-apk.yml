@@ -182,6 +182,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          prerelease_args=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/*.apk dist/SHA256SUMS.txt --clobber
           else
@@ -190,5 +195,6 @@ jobs:
               dist/SHA256SUMS.txt \
               --title "Pocket Backup $RELEASE_TAG" \
               --target "$RELEASE_TARGET_SHA" \
-              --generate-notes
+              --generate-notes \
+              "${prerelease_args[@]}"
           fi

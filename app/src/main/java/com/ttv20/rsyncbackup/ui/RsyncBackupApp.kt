@@ -101,6 +101,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -165,8 +166,10 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.ttv20.rsyncbackup.BuildConfig
 import com.ttv20.rsyncbackup.MainActivity
 import com.ttv20.rsyncbackup.R
+import com.ttv20.rsyncbackup.RsyncBackupApplication
 import com.ttv20.rsyncbackup.backup.BackupService
 import com.ttv20.rsyncbackup.backup.BinaryPaths
 import com.ttv20.rsyncbackup.backup.AndroidConstraintSnapshotReader
@@ -176,6 +179,8 @@ import com.ttv20.rsyncbackup.backup.ConstraintSnapshot
 import com.ttv20.rsyncbackup.backup.NativeBinaryManager
 import com.ttv20.rsyncbackup.backup.RsyncCommandBuilder
 import com.ttv20.rsyncbackup.backup.SshRuntimeFiles
+import com.ttv20.rsyncbackup.diagnostics.DiagnosticsAttributes
+import com.ttv20.rsyncbackup.diagnostics.diagnosticsWelcomeDefaultChecked
 import com.ttv20.rsyncbackup.model.AppState
 import com.ttv20.rsyncbackup.model.BackupEndReason
 import com.ttv20.rsyncbackup.model.BackupLog
@@ -263,6 +268,11 @@ private const val MIN_PORT = 1
 private const val MAX_PORT = 65535
 private const val IMPORTED_SSH_PRIVATE_KEY_ALIAS = "imported-ssh-private-key"
 private const val IMPORTED_SSH_PASSPHRASE_ALIAS = "imported-ssh-passphrase"
+private const val PERMISSION_ALL_FILES_ACCESS = "all_files_access"
+private const val PERMISSION_BATTERY_OPTIMIZATION = "battery_optimization"
+private const val PERMISSION_EXACT_ALARM = "exact_alarm"
+private const val PERMISSION_NOTIFICATIONS = "notifications"
+private const val PERMISSION_WIFI_STATE = "wifi_state"
 
 private enum class OnboardingStep(val title: String) {
     Welcome("Welcome"),
@@ -386,6 +396,9 @@ fun RsyncBackupApp(
                 ),
             )
         }
+        (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.trackEvent(
+            if (completed) "onboarding_completed" else "onboarding_skipped",
+        )
         selectedScreen = Screen.Dashboard.name
         permissionOnboardingActive = false
         onboardingActive = false
@@ -831,6 +844,12 @@ private fun OnboardingFlow(
     }
     var dryRunResult by remember { mutableStateOf<DryRunResult?>(null) }
     var childBackHandler by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var welcomeDiagnosticsEnabled by rememberSaveable {
+        mutableStateOf(
+            state.settings.diagnosticsEnabled
+                ?: diagnosticsWelcomeDefaultChecked(),
+        )
+    }
     val step = OnboardingStep.valueOf(currentStep)
     val stepIndex = OnboardingSteps.indexOf(step).coerceAtLeast(0)
 
@@ -850,14 +869,20 @@ private fun OnboardingFlow(
     }
 
     fun saveTargetDraft() {
+        val wasNew = state.targets.none { it.id == targetDraft.id }
         repository.upsertTarget(targetDraft)
+        if (wasNew) {
+            trackTargetCreated(context, targetDraft)
+        }
         savedTargetId = targetDraft.id
     }
 
     fun saveProfileDraft() {
+        val previousProfile = state.profiles.firstOrNull { it.id == profileDraft.id }
         val reviewed = profileDraft.copy(remoteSafetyReviewedAt = Instant.now().toString())
         repository.upsertProfile(reviewed)
         scheduler.schedule(reviewed)
+        trackProfileSaved(context, previousProfile, reviewed)
         profileDraft = reviewed
         savedProfileId = reviewed.id
     }
@@ -879,7 +904,12 @@ private fun OnboardingFlow(
                 val previous = OnboardingSteps.getOrNull(stepIndex - 1)
                 if (previous != null) goTo(previous)
             }
-            PendingOnboardingNavigation.Skip -> onExitToDashboard(false)
+            PendingOnboardingNavigation.Skip -> {
+                if (state.settings.diagnosticsEnabled == null) {
+                    updateDiagnosticsConsent(context, repository, welcomeDiagnosticsEnabled)
+                }
+                onExitToDashboard(false)
+            }
         }
     }
 
@@ -965,8 +995,19 @@ private fun OnboardingFlow(
             ) { targetStep ->
                 when (targetStep) {
                     OnboardingStep.Welcome -> WelcomeStep(
-                        onStart = { goTo(OnboardingStep.Permissions) },
-                        onSkip = { onExitToDashboard(false) },
+                        diagnosticsEnabled = welcomeDiagnosticsEnabled,
+                        onDiagnosticsEnabledChange = { welcomeDiagnosticsEnabled = it },
+                        onStart = {
+                            updateDiagnosticsConsent(context, repository, welcomeDiagnosticsEnabled)
+                            (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.trackEvent(
+                                "onboarding_started",
+                            )
+                            goTo(OnboardingStep.Permissions)
+                        },
+                        onSkip = {
+                            updateDiagnosticsConsent(context, repository, welcomeDiagnosticsEnabled)
+                            onExitToDashboard(false)
+                        },
                     )
                     OnboardingStep.Permissions -> OnboardingPermissionsStep(
                         permissions = permissions,
@@ -1026,7 +1067,12 @@ private fun OnboardingFlow(
 }
 
 @Composable
-private fun WelcomeStep(onStart: () -> Unit, onSkip: () -> Unit) {
+private fun WelcomeStep(
+    diagnosticsEnabled: Boolean,
+    onDiagnosticsEnabledChange: (Boolean) -> Unit,
+    onStart: () -> Unit,
+    onSkip: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1041,12 +1087,65 @@ private fun WelcomeStep(onStart: () -> Unit, onSkip: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            DiagnosticsConsentToggle(
+                checked = diagnosticsEnabled,
+                onCheckedChange = onDiagnosticsEnabledChange,
+                showFdroidCta = BuildConfig.IS_FDROID_BUILD && !diagnosticsEnabled,
+                modifier = Modifier.testTag("onboarding-diagnostics-toggle"),
+            )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onStart, modifier = Modifier.testTag("onboarding-start-button")) {
                     Text("Start setup")
                 }
                 OutlinedButton(onClick = onSkip) {
                     Text("Skip")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsConsentToggle(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    showFdroidCta: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.Top,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onCheckedChange(!checked) }
+                .padding(vertical = 4.dp),
+        ) {
+            Checkbox(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                modifier = Modifier.testTag("diagnostics-consent-checkbox"),
+            )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(top = 11.dp),
+            ) {
+                Text("Send diagnostics and error reports", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Helps find crashes, failed backups, and setup problems. No backup paths, server addresses, usernames, SSH keys, file names, rsync output, or Wi-Fi names are sent.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (showFdroidCta) {
+                    Text(
+                        "F-Droid builds keep this off unless you choose to help. You can enable it now or later in Settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
         }
@@ -1144,8 +1243,10 @@ private fun OnboardingProfileStep(
         state = state,
         profile = profile,
         onSave = { savedProfile ->
+            val previousProfile = state.profiles.firstOrNull { it.id == savedProfile.id }
             repository.upsertProfile(savedProfile)
             scheduler.schedule(savedProfile)
+            trackProfileSaved(context, previousProfile, savedProfile)
             onSave(savedProfile)
         },
         onDelete = null,
@@ -2373,6 +2474,7 @@ private fun DeleteConfirmationDialog(
     confirmLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    confirmButtonTestTag: String? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2382,6 +2484,7 @@ private fun DeleteConfirmationDialog(
         confirmButton = {
             Button(
                 onClick = onConfirm,
+                modifier = confirmButtonTestTag?.let { Modifier.testTag(it) } ?: Modifier,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error,
                     contentColor = MaterialTheme.colorScheme.onError,
@@ -2482,6 +2585,7 @@ private fun ProfilesScreen(
     val addTargetFromProfile: () -> TargetRecord = {
         val target = defaultTarget("New target", state.targets.size + 1)
         repository.upsertTarget(target)
+        trackTargetCreated(context, target)
         target
     }
     val addProfile: () -> Unit = {
@@ -2531,9 +2635,11 @@ private fun ProfilesScreen(
             ProfileEditor(
                 state = state,
                 profile = editingProfile,
-                onSave = {
-                    repository.upsertProfile(it)
-                    scheduler.schedule(it)
+                onSave = { savedProfile ->
+                    val previousProfile = state.profiles.firstOrNull { it.id == savedProfile.id }
+                    repository.upsertProfile(savedProfile)
+                    scheduler.schedule(savedProfile)
+                    trackProfileSaved(context, previousProfile, savedProfile)
                     closeEditor()
                 },
                 onDelete = {
@@ -2542,6 +2648,14 @@ private fun ProfilesScreen(
                             BackupService.cancel(context)
                         }
                         scheduler.cancel(editingProfile.id)
+                        if (editingProfile.schedule.type != ScheduleType.DISABLED) {
+                            diagnosticsController(context)?.trackEvent(
+                                "schedule_disabled",
+                                DiagnosticsAttributes.backupIdentity(editingProfile) + mapOf(
+                                    DiagnosticsAttributes.SCHEDULE_TYPE to editingProfile.schedule.type.name.lowercase(),
+                                ),
+                            )
+                        }
                         repository.removeProfile(editingProfile.id)
                     }
                     closeEditor()
@@ -3007,6 +3121,16 @@ private fun TargetsScreen(
                             BackupService.cancel(context)
                         }
                         dependentProfileIds.forEach { scheduler.cancel(it) }
+                        dependentProfiles
+                            .filter { it.schedule.type != ScheduleType.DISABLED }
+                            .forEach { profile ->
+                                diagnosticsController(context)?.trackEvent(
+                                    "schedule_disabled",
+                                    DiagnosticsAttributes.backupIdentity(profile) + mapOf(
+                                        DiagnosticsAttributes.SCHEDULE_TYPE to profile.schedule.type.name.lowercase(),
+                                    ),
+                                )
+                            }
                         repository.removeTarget(editingTarget.id)
                         closeEditor()
                     }
@@ -3175,11 +3299,15 @@ private fun TargetEditor(
         connectedTarget: TargetRecord,
         trustedHostFingerprints: List<com.ttv20.rsyncbackup.model.TrustedHostFingerprint>,
     ) {
+        val wasNew = isDraft && state.targets.none { it.id == connectedTarget.id }
         repository.update { appState ->
             appState.copy(
                 targets = appState.targets.filterNot { it.id == connectedTarget.id } + connectedTarget,
                 trustedHostFingerprints = trustedHostFingerprints,
             )
+        }
+        if (wasNew) {
+            trackTargetCreated(context, connectedTarget)
         }
         onSave(connectedTarget)
     }
@@ -3187,14 +3315,21 @@ private fun TargetEditor(
     fun connectAndSave() {
         val targetToConnect = normalizedTargetForConnect()
         val keySettings = targetToConnect.resolvedSshKeySettings(state.sshKeySettings)
+        val connectionSetup = TargetConnectionSetup(context, secretStore)
+        val preferredRoute = connectionSetup.preferredRoute(targetToConnect)?.route
+        val connectAttributes = mapOf(
+            DiagnosticsAttributes.TARGET_ID to targetToConnect.id,
+            DiagnosticsAttributes.ROUTE_USED to preferredRoute?.name?.lowercase(),
+        )
         editing = targetToConnect
         connectBusy = true
         connectMessage = "Connecting to the server..."
         connectError = null
         setupError = null
+        diagnosticsController(context)?.trackEvent("connectivity_test_started", connectAttributes)
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                TargetConnectionSetup(context, secretStore).connect(
+                connectionSetup.connect(
                     state = state,
                     target = targetToConnect,
                     sshKeySettings = keySettings,
@@ -3202,14 +3337,36 @@ private fun TargetEditor(
             }
             when (result) {
                 is TargetConnectResult.Authorized -> {
+                    val attributes = mapOf(
+                        DiagnosticsAttributes.TARGET_ID to targetToConnect.id,
+                        DiagnosticsAttributes.ROUTE_USED to result.route.route.name.lowercase(),
+                        DiagnosticsAttributes.RESULT to "authorized",
+                    )
+                    diagnosticsController(context)?.trackEvent("connectivity_test_finished", attributes)
+                    diagnosticsController(context)?.trackEvent("host_key_confirmed", attributes)
                     connectMessage = result.message
                     saveConnectedTarget(result.target, result.trustedHostFingerprints)
                 }
                 is TargetConnectResult.NeedsPassword -> {
+                    diagnosticsController(context)?.trackEvent(
+                        "connectivity_test_finished",
+                        mapOf(
+                            DiagnosticsAttributes.TARGET_ID to targetToConnect.id,
+                            DiagnosticsAttributes.ROUTE_USED to result.route.route.name.lowercase(),
+                            DiagnosticsAttributes.RESULT to "needs_password",
+                        ),
+                    )
                     pendingPasswordSetup = result
                     connectMessage = null
                 }
                 is TargetConnectResult.Failed -> {
+                    diagnosticsController(context)?.trackEvent(
+                        "connectivity_test_finished",
+                        connectAttributes + mapOf(
+                            DiagnosticsAttributes.RESULT to "failed",
+                            DiagnosticsAttributes.FAILURE_CATEGORY to result.failureCategory,
+                        ),
+                    )
                     connectError = result.message
                     connectMessage = null
                 }
@@ -3307,6 +3464,14 @@ private fun TargetEditor(
                                     val updatedTarget = pending.target.copy(
                                         publicKeyInstalledAt = Instant.now().toString(),
                                         keyOnlyLoginVerifiedAt = Instant.now().toString(),
+                                    )
+                                    diagnosticsController(context)?.trackEvent(
+                                        "host_key_confirmed",
+                                        mapOf(
+                                            DiagnosticsAttributes.TARGET_ID to updatedTarget.id,
+                                            DiagnosticsAttributes.ROUTE_USED to pending.route.route.name.lowercase(),
+                                            DiagnosticsAttributes.RESULT to "authorized_after_password",
+                                        ),
                                     )
                                     setupPassword = ""
                                     pendingPasswordSetup = null
@@ -3563,7 +3728,7 @@ private fun SshKeysScreen(state: AppState, repository: AppRepository, secretStor
             SshKeyManager(secretStore).generateEd25519(
                 keyName = suggestedSshKeyName(state.settings.phoneHostname),
             )
-        }
+            }
             .onSuccess { key ->
                 repository.update { appState ->
                     appState.copy(
@@ -3574,6 +3739,10 @@ private fun SshKeysScreen(state: AppState, repository: AppRepository, secretStor
                         ),
                     )
                 }
+                diagnosticsController(context)?.trackEvent(
+                    "ssh_key_generated",
+                    mapOf(DiagnosticsAttributes.SOURCE to "settings"),
+                )
                 error = null
                 successMessage = "App SSH key generated. Copy the public key or install it on your target."
             }
@@ -4119,15 +4288,38 @@ private fun PermissionSettingsSection(
     onRefreshPermissions: () -> Unit,
 ) {
     val context = LocalContext.current
+    var pendingSettingsPermissionType by remember { mutableStateOf<String?>(null) }
+    val settingsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        pendingSettingsPermissionType?.let { permissionType ->
+            val refreshed = PermissionStateReader(context).read()
+            trackPermissionResult(context, permissionType, refreshed.isPermissionGranted(permissionType))
+        }
+        pendingSettingsPermissionType = null
+        onRefreshPermissions()
+    }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) {
+    ) { granted ->
+        trackPermissionResult(context, PERMISSION_NOTIFICATIONS, granted)
         onRefreshPermissions()
     }
     val wifiPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) {
+    ) { granted ->
+        trackPermissionResult(context, PERMISSION_WIFI_STATE, granted)
         onRefreshPermissions()
+    }
+    fun openSettingsPermission(permissionType: String, intent: Intent) {
+        trackPermissionPromptOpened(context, permissionType)
+        pendingSettingsPermissionType = permissionType
+        runCatching {
+            settingsPermissionLauncher.launch(intent)
+        }.onFailure {
+            pendingSettingsPermissionType = null
+            trackPermissionResult(context, permissionType, false)
+        }
     }
     SectionCard {
         Text("Permission setup/status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -4138,30 +4330,32 @@ private fun PermissionSettingsSection(
             detail = "Needed to read the folders you choose for backup.",
             granted = permissions.allFilesAccess,
         ) {
-            context.startActivity(PermissionIntents.allFilesAccess(context))
+            openSettingsPermission(PERMISSION_ALL_FILES_ACCESS, PermissionIntents.allFilesAccess(context))
         }
         PermissionRow(
             label = "Battery optimization exemption",
             detail = "Keeps scheduled backups from being stopped in the background.",
             granted = permissions.batteryOptimizationExempt,
         ) {
-            context.startActivity(PermissionIntents.batteryOptimization(context))
+            openSettingsPermission(PERMISSION_BATTERY_OPTIMIZATION, PermissionIntents.batteryOptimization(context))
         }
         PermissionRow(
             label = "Exact alarm access",
             detail = "Lets scheduled backups start at the configured time.",
             granted = permissions.exactAlarmAccess,
         ) {
-            context.startActivity(PermissionIntents.exactAlarm(context))
+            openSettingsPermission(PERMISSION_EXACT_ALARM, PermissionIntents.exactAlarm(context))
         }
         PermissionRow(
             label = "Notifications",
             detail = "Shows backup progress, completion, and failures.",
             granted = permissions.notifications,
         ) {
+            trackPermissionPromptOpened(context, PERMISSION_NOTIFICATIONS)
             if (Build.VERSION.SDK_INT >= 33) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else {
+                trackPermissionResult(context, PERMISSION_NOTIFICATIONS, true)
                 onRefreshPermissions()
             }
         }
@@ -4171,6 +4365,7 @@ private fun PermissionSettingsSection(
             detail = "Only needed if you want backups to run only on Wi-Fi or only on a specific network.",
             granted = permissions.wifiStateAccess,
         ) {
+            trackPermissionPromptOpened(context, PERMISSION_WIFI_STATE)
             wifiPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         OutlinedButton(onClick = onRefreshPermissions) {
@@ -4209,6 +4404,22 @@ private fun compactMiddleUi(value: String, maxLength: Int = 48): String {
 
 @Composable
 private fun LogsScreen(state: AppState, repository: AppRepository) {
+    var showClearPrompt by rememberSaveable { mutableStateOf(false) }
+
+    if (showClearPrompt) {
+        DeleteConfirmationDialog(
+            title = "Clear logs?",
+            message = "This removes all backup logs from this device. This cannot be undone.",
+            confirmLabel = "Clear",
+            onConfirm = {
+                showClearPrompt = false
+                repository.clearLogs()
+            },
+            onDismiss = { showClearPrompt = false },
+            confirmButtonTestTag = "logs-confirm-clear-button",
+        )
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
@@ -4220,8 +4431,9 @@ private fun LogsScreen(state: AppState, repository: AppRepository) {
                     SectionHeader("Logs")
                 }
                 OutlinedButton(
-                    onClick = { repository.clearLogs() },
+                    onClick = { showClearPrompt = true },
                     enabled = state.logs.isNotEmpty(),
+                    modifier = Modifier.testTag("logs-clear-button"),
                 ) {
                     Icon(Icons.Outlined.Delete, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -4457,6 +4669,100 @@ private fun importedConfigurationState(
     )
 }
 
+private fun updateDiagnosticsConsent(
+    context: Context,
+    repository: AppRepository,
+    enabled: Boolean,
+) {
+    repository.update { state ->
+        state.copy(settings = state.settings.copy(diagnosticsEnabled = enabled))
+    }
+    (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.updateConsent(enabled)
+}
+
+private fun diagnosticsController(context: Context) =
+    (context.applicationContext as? RsyncBackupApplication)?.diagnostics
+
+private fun trackTargetCreated(context: Context, target: TargetRecord) {
+    diagnosticsController(context)?.trackEvent(
+        "target_created",
+        mapOf(DiagnosticsAttributes.TARGET_ID to target.id),
+    )
+}
+
+private fun trackProfileSaved(context: Context, previousProfile: BackupProfile?, savedProfile: BackupProfile) {
+    val diagnostics = diagnosticsController(context) ?: return
+    val attributes = DiagnosticsAttributes.backupIdentity(savedProfile) + mapOf(
+        DiagnosticsAttributes.SCHEDULE_TYPE to savedProfile.schedule.type.name.lowercase(),
+    )
+    if (previousProfile == null) {
+        diagnostics.trackEvent("profile_created", attributes)
+    }
+
+    val previousScheduleType = previousProfile?.schedule?.type ?: ScheduleType.DISABLED
+    val nextScheduleType = savedProfile.schedule.type
+    val scheduleChanged = previousProfile?.schedule != savedProfile.schedule
+    when {
+        previousScheduleType == ScheduleType.DISABLED && nextScheduleType != ScheduleType.DISABLED -> {
+            diagnostics.trackEvent("schedule_created", attributes)
+        }
+        previousScheduleType != ScheduleType.DISABLED && nextScheduleType == ScheduleType.DISABLED -> {
+            diagnostics.trackEvent("schedule_disabled", attributes)
+        }
+        previousScheduleType != ScheduleType.DISABLED && nextScheduleType != ScheduleType.DISABLED && scheduleChanged -> {
+            diagnostics.trackEvent("schedule_updated", attributes)
+        }
+    }
+}
+
+private fun configurationCounts(state: AppState): Map<String, Any?> =
+    mapOf(
+        DiagnosticsAttributes.PROFILE_COUNT to state.profiles.size,
+        DiagnosticsAttributes.TARGET_COUNT to state.targets.size,
+    )
+
+private fun configurationCounts(document: ExportDocument): Map<String, Any?> =
+    mapOf(
+        DiagnosticsAttributes.PROFILE_COUNT to document.profiles.size,
+        DiagnosticsAttributes.TARGET_COUNT to document.targets.size,
+    )
+
+private fun Throwable.diagnosticsFailureCategory(): String =
+    when (this) {
+        is kotlinx.serialization.SerializationException -> "invalid_json"
+        is IllegalArgumentException -> "invalid_input"
+        is IllegalStateException -> "invalid_state"
+        is SecurityException -> "permission_denied"
+        else -> "unexpected_error"
+    }
+
+private fun trackPermissionPromptOpened(context: Context, permissionType: String) {
+    diagnosticsController(context)?.trackEvent(
+        "permission_prompt_opened",
+        mapOf(DiagnosticsAttributes.PERMISSION_TYPE to permissionType),
+    )
+}
+
+private fun trackPermissionResult(context: Context, permissionType: String, granted: Boolean) {
+    diagnosticsController(context)?.trackEvent(
+        if (granted) "permission_granted" else "permission_denied",
+        mapOf(
+            DiagnosticsAttributes.PERMISSION_TYPE to permissionType,
+            DiagnosticsAttributes.RESULT to if (granted) "granted" else "denied",
+        ),
+    )
+}
+
+private fun com.ttv20.rsyncbackup.permissions.AppPermissionState.isPermissionGranted(permissionType: String): Boolean =
+    when (permissionType) {
+        PERMISSION_ALL_FILES_ACCESS -> allFilesAccess
+        PERMISSION_BATTERY_OPTIMIZATION -> batteryOptimizationExempt
+        PERMISSION_EXACT_ALARM -> exactAlarmAccess
+        PERMISSION_NOTIFICATIONS -> notifications
+        PERMISSION_WIFI_STATE -> wifiStateAccess
+        else -> false
+    }
+
 @Composable
 private fun SettingsScreen(
     state: AppState,
@@ -4502,9 +4808,14 @@ private fun SettingsScreen(
                 output.write(text.toByteArray(Charsets.UTF_8))
             } ?: error("Could not open export file")
         }.onSuccess {
+            diagnosticsController(context)?.trackEvent("export_finished", configurationCounts(state))
             exportMessage = "Configuration saved"
             exportError = null
         }.onFailure {
+            diagnosticsController(context)?.trackEvent(
+                "export_failed",
+                configurationCounts(state) + mapOf(DiagnosticsAttributes.FAILURE_CATEGORY to it.diagnosticsFailureCategory()),
+            )
             exportMessage = null
             exportError = it.message ?: "Configuration save failed"
         }
@@ -4523,6 +4834,7 @@ private fun SettingsScreen(
         when (action) {
             SettingsExportAction.Copy -> {
                 clipboard.setText(AnnotatedString(text))
+                diagnosticsController(context)?.trackEvent("export_finished", configurationCounts(state))
                 exportMessage = message
             }
             SettingsExportAction.Save -> {
@@ -4537,6 +4849,7 @@ private fun SettingsScreen(
         exportBusy = true
         exportError = null
         privateKeyExportError = null
+        diagnosticsController(context)?.trackEvent("export_started", configurationCounts(state))
         scope.launch {
             val result = withContext(Dispatchers.Default) {
                 runCatching {
@@ -4560,7 +4873,15 @@ private fun SettingsScreen(
                 )
                 resetPrivateKeyExportDialog()
             }.onFailure {
+                (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.trackHandledException(
+                    it,
+                    mapOf(DiagnosticsAttributes.SOURCE to "settings_export"),
+                )
                 val message = it.message ?: "Configuration export failed"
+                diagnosticsController(context)?.trackEvent(
+                    "export_failed",
+                    configurationCounts(state) + mapOf(DiagnosticsAttributes.FAILURE_CATEGORY to it.diagnosticsFailureCategory()),
+                )
                 if (pendingExportAction == null) {
                     exportError = message
                 } else {
@@ -4609,6 +4930,24 @@ private fun SettingsScreen(
             }
         }
         PermissionSettingsSection(permissions, onRefreshPermissions)
+        SectionCard {
+            Text("Diagnostics and error reporting", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            DiagnosticsConsentToggle(
+                checked = state.settings.diagnosticsEnabled == true,
+                onCheckedChange = { enabled ->
+                    updateDiagnosticsConsent(context, repository, enabled)
+                },
+                showFdroidCta = BuildConfig.IS_FDROID_BUILD && state.settings.diagnosticsEnabled != true,
+                modifier = Modifier.testTag("settings-diagnostics-toggle"),
+            )
+            if (BuildConfig.IS_FDROID_BUILD && state.settings.diagnosticsEnabled != true) {
+                Text(
+                    "Opting in helps improve scheduled backup reliability on Android versions and devices that are hard to reproduce locally.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         SectionCard {
             ThemePreferenceSelector(settings.themePreference) { preference ->
                 val updated = settings.copy(themePreference = preference)
@@ -4669,13 +5008,14 @@ private fun SettingsScreen(
                     importBusy = true
                     importError = null
                     importMessage = null
+                    diagnosticsController(context)?.trackEvent("import_started")
                     val text = importText
                     val privateKeyPassword = importPrivateKeyPassword
                     scope.launch {
                         val result = withContext(Dispatchers.Default) {
                             runCatching {
                                 val document = ExportCodec.decode(text)
-                                importedConfigurationState(
+                                document to importedConfigurationState(
                                     currentState = state,
                                     document = document,
                                     secretStore = secretStore,
@@ -4683,13 +5023,25 @@ private fun SettingsScreen(
                                 )
                             }
                         }
-                        result.onSuccess { importResult ->
+                        result.onSuccess { (document, importResult) ->
                             repository.update { importResult.state }
+                            diagnosticsController(context)?.trackEvent(
+                                "import_finished",
+                                configurationCounts(document),
+                            )
                             importText = ""
                             importPrivateKeyPassword = ""
                             importError = null
                             importMessage = importResult.message
                         }.onFailure {
+                            (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.trackHandledException(
+                                it,
+                                mapOf(DiagnosticsAttributes.SOURCE to "settings_import"),
+                            )
+                            diagnosticsController(context)?.trackEvent(
+                                "import_failed",
+                                mapOf(DiagnosticsAttributes.FAILURE_CATEGORY to it.diagnosticsFailureCategory()),
+                            )
                             importMessage = null
                             importError = it.message
                         }

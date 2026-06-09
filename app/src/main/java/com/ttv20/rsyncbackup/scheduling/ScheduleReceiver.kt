@@ -9,6 +9,7 @@ import com.ttv20.rsyncbackup.backup.BackupConstraintEvaluator
 import com.ttv20.rsyncbackup.backup.BackupService
 import com.ttv20.rsyncbackup.backup.recordConstraintBlockedBackup
 import com.ttv20.rsyncbackup.backup.recordScheduledStartBlockedBackup
+import com.ttv20.rsyncbackup.diagnostics.DiagnosticsAttributes
 import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.ScheduleType
 
@@ -33,6 +34,19 @@ class ScheduleReceiver : BroadcastReceiver() {
             return
         }
 
+        val scheduleDelayMillis = if (scheduledFor > 0L) now - scheduledFor else null
+        val scheduleAttributes = mapOf(
+            DiagnosticsAttributes.TRIGGER_TYPE to BackupRunTrigger.AUTOMATIC.name.lowercase(),
+            DiagnosticsAttributes.SCHEDULE_TYPE to profile.schedule.type.name.lowercase(),
+            DiagnosticsAttributes.DELAY_MS to scheduleDelayMillis?.takeIf { it >= 0L },
+        ) + DiagnosticsAttributes.backupIdentity(profile)
+        if (scheduleDelayMillis != null && scheduleDelayMillis > LATE_TRIGGER_TOLERANCE_MS) {
+            app.diagnostics.trackEvent("schedule_alarm_late", scheduleAttributes)
+        }
+        app.diagnostics.trackEvent(
+            "schedule_alarm_received",
+            scheduleAttributes,
+        )
         scheduler.schedule(profile)
         val snapshot = AndroidConstraintSnapshotReader(context).read()
         val failures = BackupConstraintEvaluator.failures(
@@ -40,30 +54,70 @@ class ScheduleReceiver : BroadcastReceiver() {
             snapshot = snapshot,
         )
         if (failures.isNotEmpty()) {
-            app.repository.recordConstraintBlockedBackup(
+            val log = app.repository.recordConstraintBlockedBackup(
                 profile = profile,
                 failures = failures,
                 trigger = BackupRunTrigger.AUTOMATIC,
                 snapshot = snapshot,
             )
+            app.diagnostics.trackEvent(
+                "constraint_blocked",
+                mapOf(
+                    DiagnosticsAttributes.TRIGGER_TYPE to BackupRunTrigger.AUTOMATIC.name.lowercase(),
+                    DiagnosticsAttributes.CONSTRAINT_RESULT to failures.joinToString(",") { it.code },
+                    DiagnosticsAttributes.CONSTRAINT_FAILURE_COUNT to failures.size,
+                    DiagnosticsAttributes.CONSTRAINT_FAILURE_CODES to failures.joinToString(",") { it.code },
+                    DiagnosticsAttributes.SCHEDULE_TYPE to profile.schedule.type.name.lowercase(),
+                ) + DiagnosticsAttributes.backupIdentity(profile),
+            )
+            app.diagnostics.trackBackupLog(log, profile)
             BackupService.notifyScheduledConstraintWarning(context, profile, failures, snapshot)
             return
         }
+        app.diagnostics.trackEvent(
+            "constraint_check_passed",
+            mapOf(
+                DiagnosticsAttributes.TRIGGER_TYPE to BackupRunTrigger.AUTOMATIC.name.lowercase(),
+                DiagnosticsAttributes.SCHEDULE_TYPE to profile.schedule.type.name.lowercase(),
+            ) + DiagnosticsAttributes.backupIdentity(profile),
+        )
 
         runCatching {
             BackupService.startScheduled(context, profileId)
         }.onFailure { error ->
             if (error.javaClass.name == "android.app.ForegroundServiceStartNotAllowedException") {
-                app.repository.recordScheduledStartBlockedBackup(
+                app.diagnostics.trackEvent(
+                    "foreground_service_limit_reached",
+                    mapOf(
+                        DiagnosticsAttributes.TRIGGER_TYPE to BackupRunTrigger.AUTOMATIC.name.lowercase(),
+                        DiagnosticsAttributes.FOREGROUND_SERVICE_FAILURE_REASON to (error.message ?: error.javaClass.simpleName),
+                    ) + DiagnosticsAttributes.backupIdentity(profile),
+                )
+                app.diagnostics.trackHandledException(
+                    error,
+                    mapOf(
+                        DiagnosticsAttributes.SOURCE to "schedule_receiver",
+                        DiagnosticsAttributes.TRIGGER_TYPE to BackupRunTrigger.AUTOMATIC.name.lowercase(),
+                    ) + DiagnosticsAttributes.backupIdentity(profile),
+                )
+                val log = app.repository.recordScheduledStartBlockedBackup(
                     profile = profile,
                     reason = error.message ?: error.javaClass.simpleName,
                 )
+                app.diagnostics.trackBackupLog(log, profile)
                 BackupService.notifyScheduledStartBlocked(
                     context = context,
                     profile = profile,
                     reason = error.message ?: error.javaClass.simpleName,
                 )
             } else {
+                app.diagnostics.trackHandledException(
+                    error,
+                    mapOf(
+                        DiagnosticsAttributes.SOURCE to "schedule_receiver",
+                        DiagnosticsAttributes.TRIGGER_TYPE to BackupRunTrigger.AUTOMATIC.name.lowercase(),
+                    ) + DiagnosticsAttributes.backupIdentity(profile),
+                )
                 throw RuntimeException(error)
             }
         }
@@ -87,5 +141,6 @@ class ScheduleReceiver : BroadcastReceiver() {
         const val EXTRA_TRIGGER_AT_MILLIS = "triggerAtMillis"
         private const val SCHEDULE_PREFS = "scheduled-backups"
         private const val EARLY_TRIGGER_TOLERANCE_MS = 15_000L
+        private const val LATE_TRIGGER_TOLERANCE_MS = 60_000L
     }
 }

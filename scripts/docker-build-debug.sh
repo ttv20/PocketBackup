@@ -13,6 +13,11 @@ $docker_cmd run --rm \
   --user root \
   -e ANDROID_HOME="$android_home" \
   -e ANDROID_SDK_ROOT="$android_home" \
+  -e MEASURE_API_KEY \
+  -e MEASURE_API_URL \
+  -e DIAGNOSTICS_PROXY_URL \
+  -e OPENOBSERVE_INGEST_URL \
+  -e OPENOBSERVE_AUTH_HEADER \
   -e HOME=/workspace \
   -e GRADLE_USER_HOME=/workspace/.gradle-cache \
   -v "$project_dir":/workspace \

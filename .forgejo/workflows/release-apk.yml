@@ -226,17 +226,23 @@ jobs:
           )"
 
           if [[ "$status" == "404" ]]; then
+            prerelease=false
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              prerelease=true
+            fi
+
             jq -n \
               --arg tag "$RELEASE_TAG" \
               --arg title "Pocket Backup $RELEASE_TAG" \
               --arg target "$GITHUB_SHA" \
+              --argjson prerelease "$prerelease" \
               '{
                 tag_name: $tag,
                 name: $title,
                 target_commitish: $target,
                 body: "Signed APK and SHA-256 checksums are attached.",
                 draft: false,
-                prerelease: false
+                prerelease: $prerelease
               }' > "$release_json.request"
 
             curl -fsS -o "$release_json" \
@@ -295,6 +301,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          prerelease_args=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/*.apk dist/SHA256SUMS.txt --clobber
           else
@@ -303,5 +314,6 @@ jobs:
               dist/SHA256SUMS.txt \
               --title "Pocket Backup $RELEASE_TAG" \
               --target "$GITHUB_SHA" \
-              --generate-notes
+              --generate-notes \
+              "${prerelease_args[@]}"
           fi

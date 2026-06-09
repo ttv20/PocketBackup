@@ -26,6 +26,7 @@ data class TargetSetupRoute(
 sealed class TargetConnectResult {
     data class Authorized(
         val target: TargetRecord,
+        val route: TargetSetupRoute,
         val trustedHostFingerprints: List<TrustedHostFingerprint>,
         val message: String,
     ) : TargetConnectResult()
@@ -38,7 +39,10 @@ sealed class TargetConnectResult {
         val message: String,
     ) : TargetConnectResult()
 
-    data class Failed(val message: String) : TargetConnectResult()
+    data class Failed(
+        val message: String,
+        val failureCategory: String,
+    ) : TargetConnectResult()
 }
 
 class TargetConnectionSetup(
@@ -58,13 +62,22 @@ class TargetConnectionSetup(
         target: TargetRecord,
         sshKeySettings: GlobalSshKeySettings,
     ): TargetConnectResult {
-        val route = preferredRoute(target) ?: return TargetConnectResult.Failed("Enter a server address or Tailscale device.")
+        val route = preferredRoute(target) ?: return TargetConnectResult.Failed(
+            message = "Enter a server address or Tailscale device.",
+            failureCategory = "missing_address",
+        )
         val scannedKeys = runCatching { scanHostKeys(state, target, route) }
             .getOrElse { error ->
-                return TargetConnectResult.Failed(error.message ?: "Could not reach SSH server")
+                return TargetConnectResult.Failed(
+                    message = error.message ?: "Could not reach SSH server",
+                    failureCategory = "host_key_scan_failed",
+                )
             }
         if (scannedKeys.isEmpty()) {
-            return TargetConnectResult.Failed("No SSH host key was returned from ${route.host}:${target.port}.")
+            return TargetConnectResult.Failed(
+                message = "No SSH host key was returned from ${route.host}:${target.port}.",
+                failureCategory = "no_host_key",
+            )
         }
 
         val trusted = mergeTrustedHostKeys(
@@ -76,12 +89,16 @@ class TargetConnectionSetup(
         val keyAuth = runCatching {
             testKeyAuth(state, updatedTarget, route, sshKeySettings, trusted)
         }.getOrElse { error ->
-            return TargetConnectResult.Failed(error.message ?: "SSH connection failed")
+            return TargetConnectResult.Failed(
+                message = error.message ?: "SSH connection failed",
+                failureCategory = "key_auth_failed",
+            )
         }
 
         return if (keyAuth.exitCode == 0) {
             TargetConnectResult.Authorized(
                 target = updatedTarget.copy(keyOnlyLoginVerifiedAt = Instant.now().toString()),
+                route = route,
                 trustedHostFingerprints = trusted,
                 message = "Connected with SSH key",
             )

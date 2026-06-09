@@ -1,6 +1,8 @@
 package com.ttv20.rsyncbackup.backup
 
 import android.content.Context
+import com.ttv20.rsyncbackup.diagnostics.DiagnosticsAttributes
+import com.ttv20.rsyncbackup.diagnostics.DiagnosticsController
 import com.ttv20.rsyncbackup.model.BackupLog
 import com.ttv20.rsyncbackup.model.BackupRunTrigger
 import com.ttv20.rsyncbackup.model.BackupStatusMarker
@@ -30,6 +32,7 @@ class BackupEngine(
     private val secretStore: SecretStore,
     private val nativeBinaryManager: NativeBinaryManager = NativeBinaryManager(context),
     private val processController: BackupProcessController = BackupProcessController(),
+    private val diagnostics: DiagnosticsController? = null,
 ) {
     suspend fun runProfile(
         profileId: String,
@@ -40,6 +43,7 @@ class BackupEngine(
         val target = state.targets.first { it.id == profile.targetId }
         val startedAt = Instant.now().toString()
         val recentOutput = mutableListOf<String>()
+        var selectedRoute: Route? = null
         processController.reset()
         repository.setRunProgress(
             RunProgressState(
@@ -53,10 +57,42 @@ class BackupEngine(
         )
         repository.markProfile(profile.id, RunStatus.RUNNING, "Backup running", startedAt)
 
+        fun backupDiagnosticsAttributes(routeUsed: Route? = selectedRoute): Map<String, Any?> =
+            DiagnosticsAttributes.backupIdentity(profile) + mapOf(
+                DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                DiagnosticsAttributes.TARGET_MODE to profile.targetMode.name.lowercase(),
+                DiagnosticsAttributes.ROUTE_USED to routeUsed?.name?.lowercase(),
+                DiagnosticsAttributes.DRY_RUN_ENABLED to profile.dryRunBeforeBackup,
+                DiagnosticsAttributes.DELETE_ENABLED to profile.deleteEnabled,
+            )
+
+        fun trackBackupPrepareFailed(
+            failureStage: String,
+            failureCategory: String,
+            routeUsed: Route? = selectedRoute,
+            exitCode: Int? = null,
+            missingComponents: List<String> = emptyList(),
+        ) {
+            diagnostics?.trackEvent(
+                "backup_prepare_failed",
+                backupDiagnosticsAttributes(routeUsed) + mapOf(
+                    DiagnosticsAttributes.FAILURE_STAGE to failureStage,
+                    DiagnosticsAttributes.FAILURE_CATEGORY to failureCategory,
+                    DiagnosticsAttributes.EXIT_CODE to exitCode,
+                    DiagnosticsAttributes.END_REASON to "error",
+                    DiagnosticsAttributes.NATIVE_MISSING_COMPONENTS to missingComponents.takeIf { it.isNotEmpty() },
+                ),
+            )
+        }
+
         fun failedLog(
             summary: String,
             raw: String = "",
             targetHostUsed: String? = null,
+            routeUsed: Route? = selectedRoute,
+            failureStage: String? = null,
+            failureCategory: String? = null,
+            rsyncExitCode: Int? = null,
         ): BackupLog {
             val finishedAt = Instant.now().toString()
             val log = BackupLog(
@@ -69,7 +105,14 @@ class BackupEngine(
                 trigger = trigger,
                 endReason = errorBackupEndReason(summary, raw),
                 endReasonDetail = summary,
+                exitCode = rsyncExitCode,
                 targetHostUsed = targetHostUsed,
+                targetMode = profile.targetMode,
+                routeUsed = routeUsed,
+                failureStage = failureStage,
+                failureCategory = failureCategory,
+                dryRunEnabled = profile.dryRunBeforeBackup,
+                deleteEnabled = profile.deleteEnabled,
                 summary = summary,
                 raw = raw,
             )
@@ -91,17 +134,48 @@ class BackupEngine(
         try {
             val nativeInstall = nativeBinaryManager.ensureInstalled()
             if (!nativeInstall.isComplete) {
-                return@withContext failedLog("Missing native binaries: ${nativeInstall.missing.joinToString()}")
+                diagnostics?.trackEvent(
+                    "native_payload_install_failed",
+                    mapOf(
+                        DiagnosticsAttributes.NATIVE_MISSING_COMPONENTS to nativeInstall.missing,
+                    ),
+                )
+                trackBackupPrepareFailed(
+                    failureStage = "native_install",
+                    failureCategory = "missing_native_binaries",
+                    missingComponents = nativeInstall.missing,
+                )
+                return@withContext failedLog(
+                    summary = "Missing native binaries: ${nativeInstall.missing.joinToString()}",
+                    failureStage = "native_install",
+                    failureCategory = "missing_native_binaries",
+                )
             }
 
             if (profile.targetMode.requiresTailscale()) {
                 val stateAlias = state.tailscale.stateSecretAlias
                 if (!state.tailscale.isConfigured || stateAlias == null) {
-                    return@withContext failedLog("Tailscale is not configured for ${profile.targetMode}")
+                    trackBackupPrepareFailed(
+                        failureStage = "tailscale_restore",
+                        failureCategory = "tailscale_not_configured",
+                    )
+                    return@withContext failedLog(
+                        summary = "Tailscale is not configured for ${profile.targetMode}",
+                        failureStage = "tailscale_restore",
+                        failureCategory = "tailscale_not_configured",
+                    )
                 }
                 runCatching { tailscaleManager.restoreState(stateAlias) }
                     .onFailure { error ->
-                        return@withContext failedLog("Tailscale state restore failed: ${error.message}")
+                        trackBackupPrepareFailed(
+                            failureStage = "tailscale_restore",
+                            failureCategory = "tailscale_restore_failed",
+                        )
+                        return@withContext failedLog(
+                            summary = "Tailscale state restore failed: ${error.message}",
+                            failureStage = "tailscale_restore",
+                            failureCategory = "tailscale_restore_failed",
+                        )
                     }
                 restoredTailscaleStateAlias = stateAlias
             }
@@ -110,14 +184,40 @@ class BackupEngine(
             val privateKeyAlias = sshKeySettings.privateKeySecretAlias
             val privateKeyBytes = privateKeyAlias?.let(secretStore::get)
             if (privateKeyBytes == null) {
-                return@withContext failedLog("No SSH private key is configured")
+                trackBackupPrepareFailed(
+                    failureStage = "ssh_key",
+                    failureCategory = "missing_ssh_private_key",
+                )
+                return@withContext failedLog(
+                    summary = "No SSH private key is configured",
+                    failureStage = "ssh_key",
+                    failureCategory = "missing_ssh_private_key",
+                )
             }
             val passphraseBytes = sshKeySettings.passphraseSecretAlias?.let { alias ->
-                secretStore.get(alias) ?: return@withContext failedLog("SSH private key passphrase is missing")
+                secretStore.get(alias) ?: run {
+                    trackBackupPrepareFailed(
+                        failureStage = "ssh_key",
+                        failureCategory = "missing_ssh_passphrase",
+                    )
+                    return@withContext failedLog(
+                        summary = "SSH private key passphrase is missing",
+                        failureStage = "ssh_key",
+                        failureCategory = "missing_ssh_passphrase",
+                    )
+                }
             }
             val knownHostsText = SshRuntimeFiles.knownHostsText(target, state.trustedHostFingerprints)
             if (knownHostsText.isBlank()) {
-                return@withContext failedLog("No trusted SSH host key is configured for ${target.name}")
+                trackBackupPrepareFailed(
+                    failureStage = "host_key",
+                    failureCategory = "missing_trusted_host_key",
+                )
+                return@withContext failedLog(
+                    summary = "No trusted SSH host key is configured for ${target.name}",
+                    failureStage = "host_key",
+                    failureCategory = "missing_trusted_host_key",
+                )
             }
             val commandInputs = writeCommandInputs(profile, privateKeyBytes, passphraseBytes, knownHostsText)
             val output = StringBuilder()
@@ -211,6 +311,10 @@ class BackupEngine(
                     endReason = reason.toBackupEndReason(),
                     endReasonDetail = reason.toBackupEndReasonDetail(),
                     targetHostUsed = targetHostUsed,
+                    targetMode = profile.targetMode,
+                    routeUsed = selectedRoute,
+                    dryRunEnabled = profile.dryRunBeforeBackup,
+                    deleteEnabled = profile.deleteEnabled,
                     summary = summary,
                     raw = finalRaw(summary),
                 )
@@ -234,7 +338,6 @@ class BackupEngine(
                     hostKeyAlias = forward?.targetHost,
                 )
 
-            var selectedRoute: Route? = null
             var lastRouteFailure: String? = null
             for (candidate in profile.targetMode.routeOrder()) {
                 val hostResult = runCatching { RsyncCommandBuilder.targetHost(target, candidate) }
@@ -288,6 +391,12 @@ class BackupEngine(
             val route = selectedRoute ?: return@withContext failedLog(
                 summary = "No usable route for ${target.name}: ${lastRouteFailure ?: "no routes configured"}",
                 raw = output.toString(),
+                failureStage = "route_probe",
+                failureCategory = "no_usable_route",
+            )
+            diagnostics?.trackEvent(
+                "backup_route_selected",
+                backupDiagnosticsAttributes(route),
             )
             val connection = routeConnection(route, selectedTailscaleForward)
             val command = buildRsyncCommand(
@@ -332,6 +441,9 @@ class BackupEngine(
                         summary = "Backup completed but status upload failed with exit ${uploadStatusResult.exitCode ?: -1}",
                         raw = output.toString(),
                         targetHostUsed = command.targetHost,
+                        routeUsed = route,
+                        failureStage = "status_upload",
+                        failureCategory = "command_exit_nonzero",
                     )
                 }
                 val uploadLogResult = runCommand(
@@ -347,6 +459,9 @@ class BackupEngine(
                         summary = "Backup completed but log upload failed with exit ${uploadLogResult.exitCode ?: -1}",
                         raw = output.toString(),
                         targetHostUsed = command.targetHost,
+                        routeUsed = route,
+                        failureStage = "log_upload",
+                        failureCategory = "command_exit_nonzero",
                     )
                 }
                 return null
@@ -379,6 +494,12 @@ class BackupEngine(
                     endReasonDetail = if (status == RunStatus.FAILED) summary else null,
                     exitCode = exitCode,
                     targetHostUsed = command.targetHost,
+                    targetMode = profile.targetMode,
+                    routeUsed = route,
+                    failureStage = if (status == RunStatus.FAILED) "rsync" else null,
+                    failureCategory = if (status == RunStatus.FAILED) "rsync_exit_nonzero" else null,
+                    dryRunEnabled = profile.dryRunBeforeBackup,
+                    deleteEnabled = profile.deleteEnabled,
                     summary = summary,
                     raw = raw,
                 )
@@ -407,10 +528,25 @@ class BackupEngine(
                     23 -> "Remote target is non-empty and unmarked"
                     else -> "Remote target safety check failed with exit $prepareExit"
                 }
+                val failureCategory = when (prepareExit) {
+                    21 -> "remote_not_directory"
+                    22 -> "remote_missing"
+                    23 -> "remote_nonempty_unmarked"
+                    else -> "remote_safety_failed"
+                }
+                trackBackupPrepareFailed(
+                    failureStage = "remote_safety",
+                    failureCategory = failureCategory,
+                    routeUsed = route,
+                    exitCode = prepareExit,
+                )
                 return@withContext failedLog(
                     summary = summary,
                     raw = output.toString(),
                     targetHostUsed = command.targetHost,
+                    routeUsed = route,
+                    failureStage = "remote_safety",
+                    failureCategory = failureCategory,
                 )
             }
 
@@ -426,6 +562,7 @@ class BackupEngine(
                 )
                 val dryRunParser = RsyncOutputParser()
                 updateProgress(RunProgressPhase.DRY_RUN, "Estimating transfer size")
+                val dryRunStartedNanos = System.nanoTime()
                 val dryRunResult = runCommand(RemoteCommand(dryRunCommand.command), commandInputs.askpassPath) { line ->
                     val progress = dryRunParser.accept(line)
                     if (dryRunParser.isProgressLine(line)) {
@@ -440,18 +577,44 @@ class BackupEngine(
                         force = false,
                     )
                 }
+                val dryRunElapsedMillis = (System.nanoTime() - dryRunStartedNanos) / 1_000_000L
+                recordLine("Dry run elapsed: $dryRunElapsedMillis ms")
                 dryRunResult.stopReason?.let { return@withContext cancelledLog(it, command.targetHost) }
                 val dryRunExit = dryRunResult.exitCode ?: -1
                 if (dryRunExit != 0) {
                     val summary = "Dry run failed with rsync exit $dryRunExit"
-                    return@withContext failedLog(summary, finalRaw(summary), command.targetHost)
+                    return@withContext failedLog(
+                        summary = summary,
+                        raw = finalRaw(summary),
+                        targetHostUsed = command.targetHost,
+                        routeUsed = route,
+                        failureStage = "dry_run",
+                        failureCategory = "rsync_exit_nonzero",
+                        rsyncExitCode = dryRunExit,
+                    )
                 }
                 val dryRunProgress = dryRunParser.snapshot()
                 val plannedBytes = dryRunProgress.bytesTransferredRaw
                 if (plannedBytes == null) {
                     val summary = "Dry run did not report transfer size"
-                    return@withContext failedLog(summary, finalRaw(summary), command.targetHost)
+                    return@withContext failedLog(
+                        summary = summary,
+                        raw = finalRaw(summary),
+                        targetHostUsed = command.targetHost,
+                        routeUsed = route,
+                        failureStage = "dry_run",
+                        failureCategory = "missing_transfer_size",
+                    )
                 }
+                diagnostics?.trackEvent(
+                    "backup_dry_run_finished",
+                    backupDiagnosticsAttributes(route) + mapOf(
+                        DiagnosticsAttributes.BACKUP_DRY_RUN_DURATION_MS to dryRunElapsedMillis,
+                        DiagnosticsAttributes.BACKUP_CHANGED_FILES to dryRunProgress.filesTransferred,
+                        DiagnosticsAttributes.BACKUP_CHANGED_BYTES to plannedBytes,
+                        DiagnosticsAttributes.RSYNC_EXIT_CODE to dryRunExit,
+                    ),
+                )
                 plannedTransferBytesRaw = plannedBytes
                 recordLine("Dry run planned transfer: $plannedBytes bytes")
                 lastRsyncProgressLine = null

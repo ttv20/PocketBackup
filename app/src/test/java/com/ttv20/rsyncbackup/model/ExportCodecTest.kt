@@ -45,6 +45,7 @@ class ExportCodecTest {
                 onboardingCompletedAt = "2026-06-03T00:00:00Z",
                 onboardingSkippedAt = "2026-06-03T00:01:00Z",
                 onboardingLastStep = "Review",
+                diagnosticsEnabled = true,
             ),
         )
 
@@ -60,6 +61,7 @@ class ExportCodecTest {
         assertFalse(encoded.contains("onboardingCompletedAt"))
         assertFalse(encoded.contains("onboardingSkippedAt"))
         assertFalse(encoded.contains("onboardingLastStep"))
+        assertFalse(encoded.contains("diagnosticsEnabled"))
     }
 
     @Test
@@ -166,6 +168,7 @@ class ExportCodecTest {
                 batteryOptimizationExemptionRequested = false,
                 themePreference = ThemePreference.DARK,
                 onboardingCompletedAt = "2026-06-04T00:00:00Z",
+                diagnosticsEnabled = true,
             ),
         )
         val exported = configuredState()
@@ -190,6 +193,7 @@ class ExportCodecTest {
         assertFalse(imported.settings.batteryOptimizationExemptionRequested)
         assertEquals(ThemePreference.DARK, imported.settings.themePreference)
         assertEquals("2026-06-04T00:00:00Z", imported.settings.onboardingCompletedAt)
+        assertEquals(true, imported.settings.diagnosticsEnabled)
     }
 
     @Test

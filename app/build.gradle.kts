@@ -1,8 +1,38 @@
 plugins {
     id("com.android.application")
+    id("sh.measure.android.gradle")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+fun Provider<String>.nonBlankOrElse(fallback: Provider<String>): Provider<String> =
+    flatMap { value ->
+        if (value.isBlank()) {
+            fallback
+        } else {
+            providers.provider { value }
+        }
+    }
+
+fun diagnosticsConfigValue(envName: String, propertyName: String, defaultValue: String = ""): Provider<String> =
+    providers.environmentVariable(envName)
+        .orElse("")
+        .nonBlankOrElse(providers.gradleProperty(propertyName))
+        .orElse(defaultValue)
+
+fun quotedBuildConfig(value: String): String =
+    "\"" + value
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"") + "\""
+
+fun normalizedVersionTag(tag: String): String =
+    tag.trim().let { value ->
+        if (value.startsWith("v", ignoreCase = true)) {
+            value.drop(1)
+        } else {
+            value
+        }
+    }
 
 val releaseStoreFile = providers.environmentVariable("POCKETSYNC_RELEASE_STORE_FILE").orNull
 val releaseStorePassword = providers.environmentVariable("POCKETSYNC_RELEASE_STORE_PASSWORD").orNull
@@ -10,14 +40,40 @@ val releaseKeyAlias = providers.environmentVariable("POCKETSYNC_RELEASE_KEY_ALIA
 val releaseKeyPassword = providers.environmentVariable("POCKETSYNC_RELEASE_KEY_PASSWORD").orNull
 val pocketSyncVersionCode = providers.environmentVariable("POCKETSYNC_VERSION_CODE")
     .orElse(providers.gradleProperty("pocketsync.versionCode"))
+val gitTagVersionName = providers.exec {
+    commandLine(
+        "sh",
+        "-c",
+        "git describe --tags --abbrev=0 --match 'v[0-9]*' --match '[0-9]*' 2>/dev/null",
+    )
+    workingDir(rootProject.projectDir)
+    isIgnoreExitValue = true
+    environment("GIT_CONFIG_COUNT", "1")
+    environment("GIT_CONFIG_KEY_0", "safe.directory")
+    environment("GIT_CONFIG_VALUE_0", rootProject.projectDir.absolutePath)
+}.standardOutput.asText.map(::normalizedVersionTag)
 val pocketSyncVersionName = providers.environmentVariable("POCKETSYNC_VERSION_NAME")
-    .orElse(providers.gradleProperty("pocketsync.versionName"))
+    .orElse("")
+    .nonBlankOrElse(providers.gradleProperty("pocketsync.versionName"))
+    .orElse("")
+    .nonBlankOrElse(gitTagVersionName)
+    .orElse("")
+    .nonBlankOrElse(providers.provider { "0.1.0" })
 val hasReleaseSigning = listOf(
     releaseStoreFile,
     releaseStorePassword,
     releaseKeyAlias,
     releaseKeyPassword,
 ).all { !it.isNullOrBlank() }
+val measureApiUrl = diagnosticsConfigValue(
+    envName = "MEASURE_API_URL",
+    propertyName = "measure.apiUrl",
+    defaultValue = "https://ingest.measure.sh",
+)
+val measureApiKey = diagnosticsConfigValue("MEASURE_API_KEY", "measure.apiKey")
+val diagnosticsProxyUrl = diagnosticsConfigValue("DIAGNOSTICS_PROXY_URL", "diagnostics.proxyUrl")
+val openObserveIngestUrl = diagnosticsConfigValue("OPENOBSERVE_INGEST_URL", "openobserve.ingestUrl")
+val openObserveAuthHeader = diagnosticsConfigValue("OPENOBSERVE_AUTH_HEADER", "openobserve.authHeader")
 val fdroidNativeAssetsDir = rootProject.layout.projectDirectory.dir("native/fdroid-out/assets")
 val fdroidNativeJniLibsDir = rootProject.layout.projectDirectory.dir("native/fdroid-out/jniLibs")
 
@@ -30,9 +86,16 @@ android {
         minSdk = 29
         targetSdk = 36
         versionCode = pocketSyncVersionCode.map { it.toInt() }.getOrElse(1)
-        versionName = pocketSyncVersionName.getOrElse("0.1.0")
+        versionName = pocketSyncVersionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders["measureApiUrl"] = measureApiUrl.get()
+        manifestPlaceholders["measureApiKey"] = measureApiKey.get()
+        buildConfigField("String", "MEASURE_API_URL", quotedBuildConfig(measureApiUrl.get()))
+        buildConfigField("String", "MEASURE_API_KEY", quotedBuildConfig(measureApiKey.get()))
+        buildConfigField("String", "DIAGNOSTICS_PROXY_URL", quotedBuildConfig(diagnosticsProxyUrl.get()))
+        buildConfigField("String", "OPENOBSERVE_INGEST_URL", quotedBuildConfig(openObserveIngestUrl.get()))
+        buildConfigField("String", "OPENOBSERVE_AUTH_HEADER", quotedBuildConfig(openObserveAuthHeader.get()))
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -73,6 +136,13 @@ android {
         }
     }
 
+    buildTypes.configureEach {
+        val isFdroid = name.startsWith("fdroid", ignoreCase = true)
+        buildConfigField("boolean", "IS_FDROID_BUILD", isFdroid.toString())
+        buildConfigField("boolean", "DIAGNOSTICS_WELCOME_DEFAULT_CHECKED", (!isFdroid).toString())
+        buildConfigField("String", "BUILD_CHANNEL", quotedBuildConfig(name))
+    }
+
     sourceSets {
         getByName("debug") {
             assets.srcDir("src/sideload/assets")
@@ -96,6 +166,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 
@@ -136,6 +207,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("com.hierynomus:sshj:0.40.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.84")
+    implementation("sh.measure:measure-android:0.17.0")
+    implementation("ch.acra:acra-core:5.13.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")

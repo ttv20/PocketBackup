@@ -34,6 +34,7 @@ data class GlobalSettings(
     val onboardingCompletedAt: String? = null,
     val onboardingSkippedAt: String? = null,
     val onboardingLastStep: String? = null,
+    val diagnosticsEnabled: Boolean? = null,
 )
 
 @Serializable
@@ -328,6 +329,12 @@ data class BackupLog(
     val endReasonDetail: String? = null,
     val exitCode: Int? = null,
     val targetHostUsed: String? = null,
+    val targetMode: TargetMode? = null,
+    val routeUsed: Route? = null,
+    val failureStage: String? = null,
+    val failureCategory: String? = null,
+    val dryRunEnabled: Boolean? = null,
+    val deleteEnabled: Boolean? = null,
     val summary: String = "",
     val raw: String = "",
 )

@@ -25,6 +25,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RsyncBackup">
 
+        <meta-data
+            android:name="sh.measure.android.API_KEY"
+            android:value="${measureApiKey}" />
+        <meta-data
+            android:name="sh.measure.android.API_URL"
+            android:value="${measureApiUrl}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

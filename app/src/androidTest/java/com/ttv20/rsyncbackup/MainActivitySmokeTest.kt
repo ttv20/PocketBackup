@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -14,6 +15,8 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
+import com.ttv20.rsyncbackup.model.BackupLog
+import com.ttv20.rsyncbackup.model.RunStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -29,12 +32,15 @@ class MainActivitySmokeTest {
         val app = composeRule.activity.application as RsyncBackupApplication
 
         composeRule.onNodeWithText("Welcome").assertIsDisplayed()
+        composeRule.onNodeWithText("Send diagnostics and error reports").assertIsDisplayed()
+        composeRule.onNodeWithTag("diagnostics-consent-checkbox").assertIsOn()
         composeRule.onNodeWithTag("onboarding-skip-button").performClick()
         composeRule.waitUntil(5_000) {
             app.repository.state.value.settings.onboardingSkippedAt != null
         }
 
         assertNotNull(app.repository.state.value.settings.onboardingSkippedAt)
+        assertEquals(true, app.repository.state.value.settings.diagnosticsEnabled)
         composeRule.onNodeWithTag("dashboard").assertIsDisplayed()
     }
 
@@ -198,6 +204,36 @@ class MainActivitySmokeTest {
             app.repository.state.value.profiles.size == profileCount + 1
         }
         assertAnyTextDisplayed(app.repository.state.value.profiles.last().name)
+    }
+
+    @Test
+    fun clearingLogsRequiresConfirmation() {
+        val app = composeRule.activity.application as RsyncBackupApplication
+
+        app.repository.appendLog(
+            BackupLog(
+                id = "ui-confirm-clear",
+                profileId = "profile-phone",
+                profileName = "Phone",
+                startedAt = "2026-06-03T01:00:00Z",
+                finishedAt = "2026-06-03T01:00:01Z",
+                status = RunStatus.SUCCESS,
+                summary = "Seeded log for confirmation",
+            ),
+        )
+
+        openScreen("Logs")
+        composeRule.onNodeWithText("Seeded log for confirmation").assertIsDisplayed()
+        composeRule.onNodeWithTag("logs-clear-button").performClick()
+
+        composeRule.onNodeWithText("Clear logs?").assertIsDisplayed()
+        assertTrue(app.repository.state.value.logs.isNotEmpty())
+
+        composeRule.onNodeWithTag("logs-confirm-clear-button").performClick()
+        composeRule.waitUntil(5_000) {
+            app.repository.state.value.logs.isEmpty()
+        }
+        composeRule.onNodeWithText("No logs yet").assertIsDisplayed()
     }
 
     @Test

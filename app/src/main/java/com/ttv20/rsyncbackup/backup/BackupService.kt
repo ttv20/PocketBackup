@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import com.ttv20.rsyncbackup.MainActivity
 import com.ttv20.rsyncbackup.R
 import com.ttv20.rsyncbackup.RsyncBackupApplication
+import com.ttv20.rsyncbackup.diagnostics.DiagnosticsAttributes
 import com.ttv20.rsyncbackup.model.BackupLog
 import com.ttv20.rsyncbackup.model.BackupProfile
 import com.ttv20.rsyncbackup.model.BackupRunTrigger
@@ -89,25 +90,62 @@ class BackupService : Service() {
 
         val foregroundError = startOrUpdateForeground(runningNotification("Checking backup constraints"))
         if (foregroundError != null) {
+            app.diagnostics.trackEvent(
+                "foreground_service_limit_reached",
+                mapOf(
+                    DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                    DiagnosticsAttributes.FOREGROUND_SERVICE_FAILURE_REASON to foregroundError.foregroundStartFailureReason(),
+                ) + DiagnosticsAttributes.backupIdentity(profile),
+            )
+            app.diagnostics.trackHandledException(
+                foregroundError,
+                mapOf(
+                    DiagnosticsAttributes.SOURCE to "foreground_service_start",
+                    DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                ) + DiagnosticsAttributes.backupIdentity(profile),
+            )
             val log = app.repository.recordForegroundServiceStartBlockedBackup(
                 profile = profile,
                 trigger = trigger,
                 reason = foregroundError.foregroundStartFailureReason(),
             )
+            app.diagnostics.trackBackupLog(log, profile)
             resultNotification(log.summary)
             stopForegroundIfStarted()
             stopSelfResult(latestStartId)
             return
         }
         if (failures.isNotEmpty() && !runAnyway) {
-            app.repository.recordConstraintBlockedBackup(profile, failures, trigger, snapshot)
+            val log = app.repository.recordConstraintBlockedBackup(profile, failures, trigger, snapshot)
+            app.diagnostics.trackEvent(
+                "constraint_blocked",
+                mapOf(
+                    DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                    DiagnosticsAttributes.CONSTRAINT_RESULT to failures.joinToString(",") { it.code },
+                    DiagnosticsAttributes.CONSTRAINT_FAILURE_COUNT to failures.size,
+                    DiagnosticsAttributes.CONSTRAINT_FAILURE_CODES to failures.joinToString(",") { it.code },
+                    DiagnosticsAttributes.SCHEDULE_TYPE to profile.schedule.type.name.lowercase(),
+                ) + DiagnosticsAttributes.backupIdentity(profile),
+            )
+            app.diagnostics.trackBackupLog(log, profile)
             notifyConstraintWarning(this, profile, failures, snapshot, trigger)
             stopForegroundIfStarted()
             stopSelfResult(latestStartId)
             return
         }
+        app.diagnostics.trackEvent(
+            "constraint_check_passed",
+            mapOf(
+                DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                DiagnosticsAttributes.SCHEDULE_TYPE to profile.schedule.type.name.lowercase(),
+            ) + DiagnosticsAttributes.backupIdentity(profile),
+        )
 
         app.repository.enqueueBackup(profileId, trigger = trigger)
+        app.diagnostics.trackEvent(
+            "backup_enqueued",
+            mapOf(DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase()),
+        )
         startQueueWorker()
     }
 
@@ -140,22 +178,41 @@ class BackupService : Service() {
                         continue
                     }
 
-                    val profileName = app.repository.state.value.profiles
-                        .firstOrNull { it.id == profileId }
-                        ?.name
-                        ?: profileId
-                    val trigger = app.repository.state.value.queue.runningTrigger ?: BackupRunTrigger.MANUAL
+                    val runningState = app.repository.state.value
+                    val profile = runningState.profiles.firstOrNull { it.id == profileId }
+                    val profileName = profile?.name ?: profileId
+                    val trigger = runningState.queue.runningTrigger ?: BackupRunTrigger.MANUAL
                     val serviceStartedAt = Instant.now().toString()
+                    app.diagnostics.trackEvent(
+                        "backup_started",
+                        mapOf(DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase()) +
+                            (profile?.let { DiagnosticsAttributes.backupIdentity(it) }
+                                ?: DiagnosticsAttributes.backupIdentity(profileId)),
+                    )
                     val foregroundError = startOrUpdateForeground(runningNotification("Running $profileName"))
                     if (foregroundError != null) {
-                        app.repository.state.value.profiles
-                            .firstOrNull { it.id == profileId }
-                            ?.let { profile ->
+                        profile
+                            ?.let { currentProfile ->
+                                app.diagnostics.trackEvent(
+                                    "foreground_service_limit_reached",
+                                    mapOf(
+                                        DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                                        DiagnosticsAttributes.FOREGROUND_SERVICE_FAILURE_REASON to foregroundError.foregroundStartFailureReason(),
+                                    ) + DiagnosticsAttributes.backupIdentity(currentProfile),
+                                )
+                                app.diagnostics.trackHandledException(
+                                    foregroundError,
+                                    mapOf(
+                                        DiagnosticsAttributes.SOURCE to "foreground_service_start",
+                                        DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                                    ) + DiagnosticsAttributes.backupIdentity(currentProfile),
+                                )
                                 val log = app.repository.recordForegroundServiceStartBlockedBackup(
-                                    profile = profile,
+                                    profile = currentProfile,
                                     trigger = trigger,
                                     reason = foregroundError.foregroundStartFailureReason(),
                                 )
+                                app.diagnostics.trackBackupLog(log, currentProfile)
                                 resultNotification(log.summary)
                             }
                         app.repository.completeRunning(profileId)
@@ -168,10 +225,18 @@ class BackupService : Service() {
                             repository = app.repository,
                             secretStore = app.secretStore,
                             processController = processController,
+                            diagnostics = app.diagnostics,
                         ).runProfile(profileId, trigger)
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {
+                        app.diagnostics.trackHandledException(
+                            error,
+                            mapOf(
+                                DiagnosticsAttributes.SOURCE to "backup_run",
+                                DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                            ) + (profile?.let { DiagnosticsAttributes.backupIdentity(it) } ?: DiagnosticsAttributes.backupIdentity(profileId)),
+                        )
                         failedLog(app, profileId, profileName, trigger, serviceStartedAt, error)
                     } finally {
                         progressNotificationJob?.cancel()
@@ -179,6 +244,7 @@ class BackupService : Service() {
                         cancelGraceJob?.cancel()
                         app.repository.completeRunning(profileId)
                     }
+                    app.diagnostics.trackBackupLog(log, profile)
                     resultNotification(log.summary)
                     if (log.isTailscaleProblem()) {
                         tailscaleProblemNotification(log.summary)
@@ -260,7 +326,15 @@ class BackupService : Service() {
             val state = app.repository.state.value
             val trigger = state.queue.runningTrigger ?: BackupRunTrigger.MANUAL
             state.profiles.firstOrNull { it.id == runningProfileId }?.let { profile ->
-                app.repository.recordForegroundServiceTimeoutBackup(profile, trigger)
+                app.diagnostics.trackEvent(
+                    "foreground_service_limit_reached",
+                    mapOf(
+                        DiagnosticsAttributes.TRIGGER_TYPE to trigger.name.lowercase(),
+                        DiagnosticsAttributes.FOREGROUND_SERVICE_FAILURE_REASON to "time_limit_reached",
+                    ) + DiagnosticsAttributes.backupIdentity(profile),
+                )
+                val log = app.repository.recordForegroundServiceTimeoutBackup(profile, trigger)
+                app.diagnostics.trackBackupLog(log, profile)
             }
             app.repository.completeRunning(runningProfileId)
         }
@@ -285,6 +359,7 @@ class BackupService : Service() {
     ): BackupLog {
         val failedAt = Instant.now().toString()
         val startedAt = app.repository.state.value.runProgress.startedAt ?: serviceStartedAt
+        val profile = app.repository.state.value.profiles.firstOrNull { it.id == profileId }
         val log = backupCrashLog(
             profileId = profileId,
             profileName = profileName,
@@ -292,6 +367,12 @@ class BackupService : Service() {
             trigger = trigger,
             error = error,
             failedAt = failedAt,
+        ).copy(
+            targetMode = profile?.targetMode,
+            failureStage = "backup_run",
+            failureCategory = "exception",
+            dryRunEnabled = profile?.dryRunBeforeBackup,
+            deleteEnabled = profile?.deleteEnabled,
         )
         app.repository.setRunProgress(
             app.repository.state.value.runProgress.copy(
