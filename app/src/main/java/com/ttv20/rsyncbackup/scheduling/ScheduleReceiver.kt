@@ -34,13 +34,19 @@ class ScheduleReceiver : BroadcastReceiver() {
         }
 
         scheduler.schedule(profile)
+        val snapshot = AndroidConstraintSnapshotReader(context).read()
         val failures = BackupConstraintEvaluator.failures(
             profile = profile,
-            snapshot = AndroidConstraintSnapshotReader(context).read(),
+            snapshot = snapshot,
         )
         if (failures.isNotEmpty()) {
-            app.repository.recordConstraintBlockedBackup(profile, failures, BackupRunTrigger.AUTOMATIC)
-            BackupService.notifyConstraintWarning(context, profile, failures)
+            app.repository.recordConstraintBlockedBackup(
+                profile = profile,
+                failures = failures,
+                trigger = BackupRunTrigger.AUTOMATIC,
+                snapshot = snapshot,
+            )
+            BackupService.notifyScheduledConstraintWarning(context, profile, failures, snapshot)
             return
         }
 

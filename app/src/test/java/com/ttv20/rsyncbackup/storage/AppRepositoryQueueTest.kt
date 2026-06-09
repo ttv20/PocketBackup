@@ -78,6 +78,26 @@ class AppRepositoryQueueTest {
     }
 
     @Test
+    fun upsertProfilePreservesExistingOrder() {
+        val repository = repository()
+        val second = BackupProfile(
+            id = "second",
+            name = "Second",
+            targetId = "target-home",
+            remotePath = "/mnt/backup/second",
+            excludes = "cache/\n",
+        )
+        repository.upsertProfile(second)
+
+        repository.upsertProfile(
+            repository.state.value.profiles.first().copy(name = "Renamed phone"),
+        )
+
+        assertEquals(listOf("profile-phone", "second"), repository.state.value.profiles.map { it.id })
+        assertEquals("Renamed phone", repository.state.value.profiles.first().name)
+    }
+
+    @Test
     fun queuePreservesRunTrigger() {
         val repository = repository()
 

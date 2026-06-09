@@ -75,15 +75,16 @@ class BackupService : Service() {
         val profile = app.repository.state.value.profiles.firstOrNull { it.id == profileId } ?: return
         val runAnyway = intent.action == ACTION_RUN_ANYWAY
         val trigger = intent.backupRunTrigger()
+        val snapshot = AndroidConstraintSnapshotReader(this).read()
         val failures = BackupConstraintEvaluator.failures(
             profile = profile,
-            snapshot = AndroidConstraintSnapshotReader(this).read(),
+            snapshot = snapshot,
         )
 
         startForeground(NOTIFICATION_ID, runningNotification("Checking backup constraints"))
         if (failures.isNotEmpty() && !runAnyway) {
-            app.repository.recordConstraintBlockedBackup(profile, failures, trigger)
-            notifyConstraintWarning(this, profile, failures)
+            app.repository.recordConstraintBlockedBackup(profile, failures, trigger, snapshot)
+            notifyConstraintWarning(this, profile, failures, snapshot, trigger)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelfResult(latestStartId)
             return
@@ -494,17 +495,30 @@ class BackupService : Service() {
             startServiceAction(context, ACTION_FORCE_STOP)
         }
 
-        fun notifyConstraintWarning(context: Context, profile: BackupProfile, failures: List<ConstraintFailure>) {
+        fun notifyConstraintWarning(
+            context: Context,
+            profile: BackupProfile,
+            failures: List<ConstraintFailure>,
+            snapshot: ConstraintSnapshot? = null,
+            trigger: BackupRunTrigger = BackupRunTrigger.MANUAL,
+        ) {
             ensureNotificationChannels(context)
-            val text = failures.joinToString { it.message }
+            val scheduled = trigger == BackupRunTrigger.AUTOMATIC
+            val text = if (scheduled) {
+                "${profile.name}: ${constraintFailureDetail(failures)}"
+            } else {
+                constraintFailureDetail(failures)
+            }
+            val title = if (scheduled) "Scheduled backup skipped" else "Backup constraints not met"
+            val bigText = constraintBlockedDetailText(profile, failures, trigger, snapshot)
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.notify(
                 CONSTRAINT_NOTIFICATION_ID,
                 NotificationCompat.Builder(context, CHANNEL_CONSTRAINTS)
                     .setSmallIcon(R.drawable.ic_launcher)
-                    .setContentTitle("Backup constraints not met")
+                    .setContentTitle(title)
                     .setContentText(text)
-                    .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
                     .setAutoCancel(true)
                     .setContentIntent(openAppIntent(context))
                     .let { builder ->
@@ -515,6 +529,21 @@ class BackupService : Service() {
                         }
                     }
                     .build(),
+            )
+        }
+
+        fun notifyScheduledConstraintWarning(
+            context: Context,
+            profile: BackupProfile,
+            failures: List<ConstraintFailure>,
+            snapshot: ConstraintSnapshot,
+        ) {
+            notifyConstraintWarning(
+                context = context,
+                profile = profile,
+                failures = failures,
+                snapshot = snapshot,
+                trigger = BackupRunTrigger.AUTOMATIC,
             )
         }
 

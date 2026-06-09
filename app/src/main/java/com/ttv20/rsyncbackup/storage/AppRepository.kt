@@ -25,6 +25,15 @@ import java.util.UUID
 private const val MAX_PERSISTED_LOG_RAW_CHARS = 32_768
 private const val TRUNCATED_RAW_LOG_PREFIX = "[Earlier raw backup output omitted to keep app storage bounded]\n"
 
+private fun <T> List<T>.replaceOrAppend(item: T, matches: (T) -> Boolean): List<T> {
+    val existingIndex = indexOfFirst(matches)
+    return if (existingIndex == -1) {
+        this + item
+    } else {
+        toMutableList().apply { set(existingIndex, item) }
+    }
+}
+
 class AppRepository(
     private val dataFile: File,
     val defaultExcludes: String,
@@ -64,7 +73,7 @@ class AppRepository(
     fun upsertProfile(profile: BackupProfile) {
         update { state ->
             state.copy(
-                profiles = state.profiles.filterNot { it.id == profile.id } + profile,
+                profiles = state.profiles.replaceOrAppend(profile) { it.id == profile.id },
             )
         }
     }
@@ -77,7 +86,7 @@ class AppRepository(
 
     fun upsertTarget(target: TargetRecord) {
         update { state ->
-            state.copy(targets = state.targets.filterNot { it.id == target.id } + target)
+            state.copy(targets = state.targets.replaceOrAppend(target) { it.id == target.id })
         }
     }
 

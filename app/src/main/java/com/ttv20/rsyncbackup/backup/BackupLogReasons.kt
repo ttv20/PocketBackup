@@ -4,6 +4,7 @@ import com.ttv20.rsyncbackup.model.BackupEndReason
 import com.ttv20.rsyncbackup.model.BackupLog
 import com.ttv20.rsyncbackup.model.BackupProfile
 import com.ttv20.rsyncbackup.model.BackupRunTrigger
+import com.ttv20.rsyncbackup.model.ConstraintSettings
 import com.ttv20.rsyncbackup.model.RunStatus
 import com.ttv20.rsyncbackup.storage.AppRepository
 import java.time.Instant
@@ -13,9 +14,10 @@ internal fun AppRepository.recordConstraintBlockedBackup(
     profile: BackupProfile,
     failures: List<ConstraintFailure>,
     trigger: BackupRunTrigger,
+    snapshot: ConstraintSnapshot? = null,
     now: String = Instant.now().toString(),
 ): BackupLog {
-    val log = constraintBlockedBackupLog(profile, failures, trigger, now)
+    val log = constraintBlockedBackupLog(profile, failures, trigger, snapshot, now)
     appendLog(log)
     markProfile(profile.id, RunStatus.CANCELLED, log.summary, now)
     return log
@@ -91,14 +93,12 @@ private fun constraintBlockedBackupLog(
     profile: BackupProfile,
     failures: List<ConstraintFailure>,
     trigger: BackupRunTrigger,
+    snapshot: ConstraintSnapshot?,
     now: String,
 ): BackupLog {
     val endReason = failures.toBackupEndReason()
-    val detail = failures.joinToString("; ") { it.message }
-    val summary = when (endReason) {
-        BackupEndReason.NO_NETWORK -> "Backup cancelled: no network"
-        else -> "Backup cancelled: constraints not met"
-    }
+    val detail = constraintFailureDetail(failures)
+    val summary = constraintBlockedSummary(failures, trigger, endReason)
     return BackupLog(
         id = UUID.randomUUID().toString(),
         profileId = profile.id,
@@ -110,9 +110,57 @@ private fun constraintBlockedBackupLog(
         endReason = endReason,
         endReasonDetail = detail,
         summary = summary,
-        raw = detail,
+        raw = constraintBlockedDetailText(profile, failures, trigger, snapshot),
     )
 }
+
+internal fun constraintFailureDetail(failures: List<ConstraintFailure>): String =
+    failures.joinToString("; ") { it.message }
+
+internal fun constraintBlockedDetailText(
+    profile: BackupProfile,
+    failures: List<ConstraintFailure>,
+    trigger: BackupRunTrigger,
+    snapshot: ConstraintSnapshot? = null,
+): String = buildList {
+    add("Profile: ${profile.name}")
+    add("Trigger: ${trigger.logLabel()}")
+    add("Reason: ${constraintFailureDetail(failures)}")
+    add("")
+    add("Constraints not met:")
+    failures.forEach { failure ->
+        add("- ${failure.message}")
+    }
+    add("")
+    add("Enabled constraints:")
+    addAll(profile.constraints.detailLines())
+    if (snapshot != null) {
+        add("")
+        add("Current device state:")
+        addAll(snapshot.detailLines())
+    }
+}.joinToString("\n")
+
+private fun constraintBlockedSummary(
+    failures: List<ConstraintFailure>,
+    trigger: BackupRunTrigger,
+    endReason: BackupEndReason,
+): String {
+    if (trigger == BackupRunTrigger.AUTOMATIC) {
+        return "Scheduled backup skipped: ${failures.shortReason()}"
+    }
+    return when (endReason) {
+        BackupEndReason.NO_NETWORK -> "Backup cancelled: no network"
+        else -> "Backup cancelled: constraints not met"
+    }
+}
+
+private fun List<ConstraintFailure>.shortReason(): String =
+    when (size) {
+        0 -> "constraints not met"
+        1 -> single().message
+        else -> "$size constraints not met"
+    }
 
 private fun List<ConstraintFailure>.toBackupEndReason(): BackupEndReason {
     val networkCodes = setOf(
@@ -128,6 +176,37 @@ private fun List<ConstraintFailure>.toBackupEndReason(): BackupEndReason {
         BackupEndReason.CONSTRAINTS_NOT_MET
     }
 }
+
+private fun ConstraintSettings.detailLines(): List<String> =
+    buildList {
+        add("- Wi-Fi only: ${wifiOnly.yesNo()}")
+        add("- Unmetered network only: ${unmeteredOnly.yesNo()}")
+        add("- Charging only: ${chargingOnly.yesNo()}")
+        add("- Battery must not be low: ${batteryNotLow.yesNo()}")
+        val selectedSsidValue = selectedSsid
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { " (${it.trim('"')})" }
+            .orEmpty()
+        add("- Selected Wi-Fi only: ${selectedSsidOnly.yesNo()}$selectedSsidValue")
+    }
+
+private fun ConstraintSnapshot.detailLines(): List<String> =
+    listOf(
+        "- Wi-Fi connected: ${hasWifiConnection.yesNo()}",
+        "- Unmetered network: ${isUnmetered.yesNo()}",
+        "- Charging: ${isCharging.yesNo()}",
+        "- Battery low: ${isBatteryLow.yesNo()}",
+        "- Current Wi-Fi: ${ssid?.trim()?.trim('"')?.takeIf { it.isNotBlank() } ?: "unknown"}",
+    )
+
+private fun BackupRunTrigger.logLabel(): String =
+    when (this) {
+        BackupRunTrigger.MANUAL -> "Manual"
+        BackupRunTrigger.AUTOMATIC -> "Scheduled"
+    }
+
+private fun Boolean.yesNo(): String = if (this) "yes" else "no"
 
 private fun looksLikeNoNetwork(text: String): Boolean =
     listOf(

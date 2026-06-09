@@ -20,6 +20,15 @@ To install the rebuilt APK on a connected device:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+If an ADB device is available after building the app, install the rebuilt APK
+and relaunch the app:
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.ttv20.rsyncbackup
+adb shell monkey -p com.ttv20.rsyncbackup -c android.intent.category.LAUNCHER 1
+```
+
 ## F-Droid Release Checks
 
 Full F-Droid/server-style builds are slow because the native Termux payload is
