@@ -47,6 +47,59 @@ internal fun AppRepository.recordScheduledStartBlockedBackup(
     return log
 }
 
+internal fun AppRepository.recordForegroundServiceStartBlockedBackup(
+    profile: BackupProfile,
+    trigger: BackupRunTrigger,
+    reason: String,
+    now: String = Instant.now().toString(),
+): BackupLog {
+    val summary = if (trigger == BackupRunTrigger.AUTOMATIC) {
+        "Scheduled backup skipped: Android foreground-service limit reached"
+    } else {
+        "Backup cancelled: Android foreground-service limit reached"
+    }
+    val log = BackupLog(
+        id = UUID.randomUUID().toString(),
+        profileId = profile.id,
+        profileName = profile.name,
+        startedAt = now,
+        finishedAt = now,
+        status = RunStatus.CANCELLED,
+        trigger = trigger,
+        endReason = BackupEndReason.ERROR,
+        endReasonDetail = reason,
+        summary = summary,
+        raw = "Android could not start the data-sync foreground service for ${profile.name}: $reason",
+    )
+    appendLog(log)
+    markProfile(profile.id, RunStatus.CANCELLED, summary, now)
+    return log
+}
+
+internal fun AppRepository.recordForegroundServiceTimeoutBackup(
+    profile: BackupProfile,
+    trigger: BackupRunTrigger,
+    now: String = Instant.now().toString(),
+): BackupLog {
+    val detail = "Android stopped the data-sync foreground service after its time limit was reached"
+    val log = BackupLog(
+        id = UUID.randomUUID().toString(),
+        profileId = profile.id,
+        profileName = profile.name,
+        startedAt = profile.status.lastRunAt ?: now,
+        finishedAt = now,
+        status = RunStatus.CANCELLED,
+        trigger = trigger,
+        endReason = BackupEndReason.ERROR,
+        endReasonDetail = detail,
+        summary = "Backup cancelled: Android foreground-service time limit reached",
+        raw = detail,
+    )
+    appendLog(log)
+    markProfile(profile.id, RunStatus.CANCELLED, log.summary, now)
+    return log
+}
+
 internal fun backupCrashLog(
     profileId: String,
     profileName: String,

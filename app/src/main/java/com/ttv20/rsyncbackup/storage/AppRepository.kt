@@ -53,7 +53,7 @@ class AppRepository(
             InitialData.appState(defaultExcludes)
         }
         val recovered = removeAbandonedOnboardingDuplicates(
-            recoverInterruptedRunningBackup(loaded),
+            recoverInterruptedRunningBackups(loaded),
         ).copy(runProgress = RunProgressState())
         mutableState.value = sanitizeStateForStorage(recovered.withUpdatedSettings(recovered.settings))
         saveBlocking()
@@ -304,23 +304,21 @@ class AppRepository(
             target.publicKeyInstalledAt == null &&
             target.keyOnlyLoginVerifiedAt == null
 
-    private fun recoverInterruptedRunningBackup(state: AppState): AppState {
+    private fun recoverInterruptedRunningBackups(state: AppState): AppState {
+        val recoveredQueuedRun = recoverQueuedRunningBackup(state)
+        return recoverOrphanedRunningProfiles(recoveredQueuedRun)
+    }
+
+    private fun recoverQueuedRunningBackup(state: AppState): AppState {
         val interruptedProfileId = state.queue.runningProfileId ?: return state
         val recoveredAt = Instant.now().toString()
         val interruptedProfile = state.profiles.firstOrNull { it.id == interruptedProfileId }
         val interruptedLog = interruptedProfile?.let { profile ->
-            BackupLog(
-                id = UUID.randomUUID().toString(),
-                profileId = profile.id,
-                profileName = profile.name,
-                startedAt = profile.status.lastRunAt ?: recoveredAt,
-                finishedAt = recoveredAt,
-                status = RunStatus.CANCELLED,
+            interruptedBackupLog(
+                profile = profile,
                 trigger = state.queue.runningTrigger ?: BackupRunTrigger.MANUAL,
-                endReason = BackupEndReason.CRASH,
-                endReasonDetail = "App stopped while backup was running",
-                summary = "Backup cancelled: interrupted before completion",
-                raw = "Backup interrupted before completion",
+                recoveredAt = recoveredAt,
+                detail = "App stopped while backup was running",
             )
         }
         return state.copy(
@@ -343,6 +341,61 @@ class AppRepository(
             },
         )
     }
+
+    private fun recoverOrphanedRunningProfiles(state: AppState): AppState {
+        val orphanedProfiles = state.profiles.filter { profile ->
+            profile.status.lastStatus == RunStatus.RUNNING && profile.id != state.queue.runningProfileId
+        }
+        if (orphanedProfiles.isEmpty()) return state
+
+        val recoveredAt = Instant.now().toString()
+        val logs = orphanedProfiles
+            .map { profile ->
+                interruptedBackupLog(
+                    profile = profile,
+                    trigger = BackupRunTrigger.MANUAL,
+                    recoveredAt = recoveredAt,
+                    detail = "App state said this backup was running, but no running job was recorded",
+                )
+            }
+        val orphanedProfileIds = orphanedProfiles.map { it.id }.toSet()
+        return state.copy(
+            runProgress = RunProgressState(),
+            logs = (logs + state.logs).take(state.settings.logRetentionLimit.coerceAtLeast(1)),
+            profiles = state.profiles.map { profile ->
+                if (profile.id in orphanedProfileIds) {
+                    profile.copy(
+                        status = profile.status.copy(
+                            lastStatus = RunStatus.CANCELLED,
+                            lastMessage = "Backup interrupted before completion",
+                        ),
+                    )
+                } else {
+                    profile
+                }
+            },
+        )
+    }
+
+    private fun interruptedBackupLog(
+        profile: BackupProfile,
+        trigger: BackupRunTrigger,
+        recoveredAt: String,
+        detail: String,
+    ): BackupLog =
+        BackupLog(
+            id = UUID.randomUUID().toString(),
+            profileId = profile.id,
+            profileName = profile.name,
+            startedAt = profile.status.lastRunAt ?: recoveredAt,
+            finishedAt = recoveredAt,
+            status = RunStatus.CANCELLED,
+            trigger = trigger,
+            endReason = BackupEndReason.CRASH,
+            endReasonDetail = detail,
+            summary = "Backup cancelled: interrupted before completion",
+            raw = "Backup interrupted before completion",
+        )
 
     fun setRunProgress(progress: RunProgressState, persist: Boolean = false) {
         val transform: (AppState) -> AppState = { it.copy(runProgress = progress) }

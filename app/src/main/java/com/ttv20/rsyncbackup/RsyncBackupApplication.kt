@@ -6,6 +6,7 @@ import com.ttv20.rsyncbackup.model.GlobalSshKeySettings
 import com.ttv20.rsyncbackup.model.suggestedSshKeyName
 import com.ttv20.rsyncbackup.model.withDetectedPhoneHostname
 import com.ttv20.rsyncbackup.settings.DeviceHostnameReader
+import com.ttv20.rsyncbackup.scheduling.BackupScheduler
 import com.ttv20.rsyncbackup.ssh.SshKeyManager
 import com.ttv20.rsyncbackup.storage.AndroidKeystoreSecretStore
 import com.ttv20.rsyncbackup.storage.AppRepository
@@ -32,7 +33,15 @@ class RsyncBackupApplication : Application() {
             }
             ensureGlobalSshKey(it)
         }
+        rescheduleEnabledBackups()
         NativeBinaryManager(this).ensureInstalled()
+    }
+
+    fun rescheduleEnabledBackups() {
+        val scheduler = BackupScheduler(this)
+        repository.state.value.profiles.forEach { profile ->
+            scheduler.schedule(profile)
+        }
     }
 
     private fun ensureGlobalSshKey(repository: AppRepository) {

@@ -123,4 +123,46 @@ class BackupLogReasonsTest {
         assertEquals(log, repository.state.value.logs.single())
         assertEquals(log.summary, repository.state.value.profiles.single().status.lastMessage)
     }
+
+    @Test
+    fun scheduledForegroundServiceLimitIsLoggedWithoutCrash() {
+        val repository = AppRepository(
+            dataFile = temporaryFolder.newFile("state.json"),
+            defaultExcludes = "cache/\n",
+        )
+        repository.loadBlocking()
+        val target = TargetRecord(
+            id = "target-home",
+            name = "Home backup target",
+            user = "ttv20",
+            lanHost = "192.168.3.200",
+        )
+        val profile = BackupProfile(
+            id = "profile-phone",
+            name = "Phone shared storage",
+            sourcePath = "/storage/emulated/0",
+            targetId = target.id,
+            remotePath = "/mnt/backup/phone",
+            targetMode = TargetMode.LAN_ONLY,
+            excludes = "cache/",
+        )
+        repository.upsertTarget(target)
+        repository.upsertProfile(profile)
+
+        val log = repository.recordForegroundServiceStartBlockedBackup(
+            profile = profile,
+            trigger = BackupRunTrigger.AUTOMATIC,
+            reason = "Time limit already exhausted for foreground service type dataSync",
+            now = "2026-06-09T06:37:00Z",
+        )
+
+        assertEquals("Scheduled backup skipped: Android foreground-service limit reached", log.summary)
+        assertEquals(RunStatus.CANCELLED, log.status)
+        assertEquals(BackupRunTrigger.AUTOMATIC, log.trigger)
+        assertEquals(BackupEndReason.ERROR, log.endReason)
+        assertEquals("Time limit already exhausted for foreground service type dataSync", log.endReasonDetail)
+        assertTrue(log.raw.contains("Phone shared storage"))
+        assertEquals(log, repository.state.value.logs.single())
+        assertEquals(log.summary, repository.state.value.profiles.single().status.lastMessage)
+    }
 }

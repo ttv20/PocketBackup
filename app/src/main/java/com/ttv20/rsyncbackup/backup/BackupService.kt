@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.text.SpannableString
@@ -44,6 +45,7 @@ class BackupService : Service() {
     private var cancelGraceJob: Job? = null
     private var progressNotificationJob: Job? = null
     @Volatile private var latestStartId = 0
+    @Volatile private var foregroundStarted = false
 
     override fun onCreate() {
         super.onCreate()
@@ -67,6 +69,10 @@ class BackupService : Service() {
         super.onDestroy()
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        handleForegroundServiceTimeout(startId)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun handleRunRequest(intent: Intent) {
@@ -81,11 +87,22 @@ class BackupService : Service() {
             snapshot = snapshot,
         )
 
-        startForeground(NOTIFICATION_ID, runningNotification("Checking backup constraints"))
+        val foregroundError = startOrUpdateForeground(runningNotification("Checking backup constraints"))
+        if (foregroundError != null) {
+            val log = app.repository.recordForegroundServiceStartBlockedBackup(
+                profile = profile,
+                trigger = trigger,
+                reason = foregroundError.foregroundStartFailureReason(),
+            )
+            resultNotification(log.summary)
+            stopForegroundIfStarted()
+            stopSelfResult(latestStartId)
+            return
+        }
         if (failures.isNotEmpty() && !runAnyway) {
             app.repository.recordConstraintBlockedBackup(profile, failures, trigger, snapshot)
             notifyConstraintWarning(this, profile, failures, snapshot, trigger)
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopForegroundIfStarted()
             stopSelfResult(latestStartId)
             return
         }
@@ -129,7 +146,21 @@ class BackupService : Service() {
                         ?: profileId
                     val trigger = app.repository.state.value.queue.runningTrigger ?: BackupRunTrigger.MANUAL
                     val serviceStartedAt = Instant.now().toString()
-                    startForeground(NOTIFICATION_ID, runningNotification("Running $profileName"))
+                    val foregroundError = startOrUpdateForeground(runningNotification("Running $profileName"))
+                    if (foregroundError != null) {
+                        app.repository.state.value.profiles
+                            .firstOrNull { it.id == profileId }
+                            ?.let { profile ->
+                                val log = app.repository.recordForegroundServiceStartBlockedBackup(
+                                    profile = profile,
+                                    trigger = trigger,
+                                    reason = foregroundError.foregroundStartFailureReason(),
+                                )
+                                resultNotification(log.summary)
+                            }
+                        app.repository.completeRunning(profileId)
+                        continue
+                    }
                     startProgressNotificationObserver(app, profileId, profileName)
                     val log = try {
                         BackupEngine(
@@ -158,7 +189,7 @@ class BackupService : Service() {
                     queueWorkerRunning = false
                     latestStartId
                 }
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopForegroundIfStarted()
                 stopSelfResult(finalStartId)
             }
         }
@@ -173,7 +204,7 @@ class BackupService : Service() {
             message = "Cancellation requested",
             progressPhase = RunProgressPhase.CANCELLING,
         )
-        startForeground(NOTIFICATION_ID, runningNotification("Cancelling backup", allowForceStop = true))
+        startOrUpdateForeground(runningNotification("Cancelling backup", allowForceStop = true))
         cancelGraceJob?.cancel()
         cancelGraceJob = scope.launch {
             delay(CANCEL_GRACE_MS)
@@ -184,7 +215,7 @@ class BackupService : Service() {
                     message = "Force stopping backup",
                     progressPhase = RunProgressPhase.FORCE_STOPPING,
                 )
-                startForeground(NOTIFICATION_ID, runningNotification("Force stopping backup", allowForceStop = true))
+                startOrUpdateForeground(runningNotification("Force stopping backup", allowForceStop = true))
             }
         }
     }
@@ -198,8 +229,51 @@ class BackupService : Service() {
             message = "Force stopping backup",
             progressPhase = RunProgressPhase.FORCE_STOPPING,
         )
-        startForeground(NOTIFICATION_ID, runningNotification("Force stopping backup", allowForceStop = true))
+        startOrUpdateForeground(runningNotification("Force stopping backup", allowForceStop = true))
     }
+
+    private fun startOrUpdateForeground(notification: android.app.Notification): Throwable? {
+        if (foregroundStarted) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
+            return null
+        }
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            foregroundStarted = true
+        }.exceptionOrNull()
+    }
+
+    private fun stopForegroundIfStarted() {
+        if (!foregroundStarted) return
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        foregroundStarted = false
+    }
+
+    private fun handleForegroundServiceTimeout(startId: Int) {
+        val app = application as? RsyncBackupApplication
+        val runningProfileId = app?.repository?.state?.value?.queue?.runningProfileId
+        if (app != null && runningProfileId != null) {
+            val state = app.repository.state.value
+            val trigger = state.queue.runningTrigger ?: BackupRunTrigger.MANUAL
+            state.profiles.firstOrNull { it.id == runningProfileId }?.let { profile ->
+                app.repository.recordForegroundServiceTimeoutBackup(profile, trigger)
+            }
+            app.repository.completeRunning(runningProfileId)
+        }
+        processController.requestForceStop()
+        progressNotificationJob?.cancel()
+        cancelGraceJob?.cancel()
+        scope.cancel()
+        stopForegroundIfStarted()
+        stopSelf(startId)
+    }
+
+    private fun Throwable.foregroundStartFailureReason(): String =
+        message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
 
     private fun failedLog(
         app: RsyncBackupApplication,

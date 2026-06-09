@@ -1035,9 +1035,9 @@ private fun WelcomeStep(onStart: () -> Unit, onSkip: () -> Unit) {
     ) {
         SectionHeader("Welcome")
         SectionCard {
-            Text("Set up the permissions, optional Tailscale connection, server target, and backup profile.")
+            Text("Pocket Backup copies selected phone folders to a server you control.")
             Text(
-                "The app creates its SSH key automatically. You only need to connect to the server and choose where backups go.",
+                "Setup will guide you through permissions, optional Tailscale access, one server, and one backup profile.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1067,7 +1067,7 @@ private fun OnboardingPermissionsStep(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            "Grant the permissions needed for scheduled file backups. Network-name access is optional.",
+            "Approve the required permissions so scheduled backups can read files and keep running in the background. Wi-Fi access is optional.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -2785,7 +2785,7 @@ private fun ProfileEditor(
             SectionCard {
                 Text("Source", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Choose the folder on this phone that should be backed up.",
+                    "Choose what to back up from this phone.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2814,11 +2814,6 @@ private fun ProfileEditor(
             }
             SectionCard {
                 Text("Target", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Choose the server target and the remote folder where this backup will be stored.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 Selector {
                     state.targets.forEach { target ->
                         FilterChip(
@@ -2869,11 +2864,6 @@ private fun ProfileEditor(
             }
             SectionCard {
                 Text("Schedule", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Leave disabled for manual backups, or set a daily time for automatic runs.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 ScheduleEditor(editing.schedule) { editing = editing.copy(schedule = it) }
             }
             SectionCard {
@@ -2901,7 +2891,7 @@ private fun ProfileEditor(
                     checked = editing.dryRunBeforeBackup,
                     onChange = { editing = editing.copy(dryRunBeforeBackup = it) },
                 )
-                WarningRow("Delete remote files not present locally", "Deletes target files that are not present in the source.", editing.deleteEnabled) {
+                WarningRow("Mirror mode: delete server files missing from phone", "Only use this with a dedicated backup folder. It makes the server match the phone source.", editing.deleteEnabled) {
                     editing = editing.copy(deleteEnabled = it)
                 }
                 ExcludesSummaryRow(
@@ -3279,7 +3269,7 @@ private fun TargetEditor(
                             .testTag("target-setup-password-field"),
                     )
                     Text(
-                        "Server fingerprint:\n${pending.fingerprintText}",
+                        "Server fingerprint, for manual checking:\n${pending.fingerprintText}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -3378,11 +3368,6 @@ private fun TargetEditor(
         ) {
             SectionCard {
                 Text("Target", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Use Server address for a public IP or DNS name, Tailscale device for a private Tailscale-only server, or both.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 OutlinedTextField(
                     editing.user,
                     { editing = editing.copy(user = it) },
@@ -3413,7 +3398,7 @@ private fun TargetEditor(
                         .testTag("target-tailscale-host-field"),
                 )
                 Text(
-                    "Connect verifies the server and installs the app SSH key if password setup is needed.",
+                    "Connect checks the server, trusts its fingerprint, and sets up the app key if the server asks for a password.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -3866,7 +3851,7 @@ private fun TailscaleScreen(state: AppState, repository: AppRepository, secretSt
     ) {
         SectionHeader("Tailscale Connection")
         Text(
-            "Optional. Use Tailscale when the server has no public address or you prefer a private mesh connection.",
+            "Optional. Use Tailscale if your server is only reachable through your private Tailscale network.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -4728,11 +4713,11 @@ private fun SettingsScreen(
                 if (!exportBusy) resetPrivateKeyExportDialog()
             },
             icon = { Icon(Icons.Outlined.Warning, contentDescription = null) },
-            title = { Text("Do you want me to export the private key or not?") },
+            title = { Text("Include private key in export?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "The private key lets this app sign in to your backup server. Exporting it is risky: anyone who gets it and its password can use that access. The normal export leaves it out.",
+                        "The private key lets Pocket Backup sign in to your backup server. Exporting it is risky: anyone who gets it and its password can use that access. The normal export leaves it out.",
                     )
                     OutlinedTextField(
                         privateKeyExportPassword,
@@ -5440,7 +5425,7 @@ private fun ExcludesSummaryRow(
             OutlinedButton(onClick = onOpen) {
                 Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Add excluded")
+                Text("Edit excludes")
             }
         }
     }

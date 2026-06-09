@@ -140,6 +140,37 @@ class AppRepositoryQueueTest {
     }
 
     @Test
+    fun loadClearsOrphanedRunningProfileStatus() {
+        val dataFile = temporaryFolder.newFile("state.json")
+        val state = seededState()
+        val runningProfile = state.profiles.single().copy(
+            status = state.profiles.single().status.copy(
+                lastRunAt = "2026-06-09T06:37:00Z",
+                lastStatus = RunStatus.RUNNING,
+                lastMessage = "Backup running",
+            ),
+        )
+        dataFile.writeText(
+            ExportCodec.json.encodeToString(
+                AppState.serializer(),
+                state.copy(profiles = listOf(runningProfile)),
+            ),
+        )
+
+        val restored = repository(dataFile)
+
+        assertNull(restored.state.value.queue.runningProfileId)
+        val profile = restored.state.value.profiles.single { it.id == "profile-phone" }
+        assertEquals(RunStatus.CANCELLED, profile.status.lastStatus)
+        assertEquals("Backup interrupted before completion", profile.status.lastMessage)
+        val log = restored.state.value.logs.first()
+        assertEquals(RunStatus.CANCELLED, log.status)
+        assertEquals(BackupRunTrigger.MANUAL, log.trigger)
+        assertEquals(BackupEndReason.CRASH, log.endReason)
+        assertEquals("2026-06-09T06:37:00Z", log.startedAt)
+    }
+
+    @Test
     fun loadClearsPersistedLiveProgress() {
         val dataFile = temporaryFolder.newFile("state.json")
         val repository = repository(dataFile)
