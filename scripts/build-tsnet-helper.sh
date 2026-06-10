@@ -23,7 +23,7 @@ case "$build_mode" in
       -v "$out_dir":/out \
       -w /src \
       "$image" \
-      go build -trimpath -ldflags='-s -w' -o /out/tsnet-nc .
+      go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/tsnet-nc .
     ;;
   host)
     (
@@ -33,7 +33,7 @@ case "$build_mode" in
       export GOARCH=arm64
       export GOMODCACHE="${GOMODCACHE:-$go_cache/pkg}"
       export GOCACHE="${GOCACHE:-$go_cache/build}"
-      go build -trimpath -ldflags='-s -w' -o "$out_dir/tsnet-nc" .
+      go build -trimpath -buildvcs=false -ldflags='-s -w' -o "$out_dir/tsnet-nc" .
     )
     ;;
   *)
