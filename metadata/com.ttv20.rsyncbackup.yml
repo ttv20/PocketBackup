@@ -1,20 +1,19 @@
 Categories:
   - Connectivity
   - System
-License: MIT
+License: GPL-3.0-or-later
 AuthorName: ttv20
 SourceCode: https://codeberg.org/ttv20/PocketBackup
 IssueTracker: https://codeberg.org/ttv20/PocketBackup/issues
 Changelog: https://codeberg.org/ttv20/PocketBackup/releases
 Name: Pocket Backup
-Summary: Backups to your own server with rsync, SSH, and optional Tailscale
+Summary: Backups to your own server with rsync with built-in Tailscale client
 Description: |-
   Pocket Backup backs up Android shared storage to a user-controlled server with
-  rsync over SSH. Tailscale connectivity is optional; LAN-only profiles can be
-  configured without Tailscale setup.
+  rsync over SSH. with built-in Tailscale client
 
   The app requests all-files access so it can back up shared storage selected by
-  the user. Restore is not included in the first release.
+  the user. Restore is not included yet.
 
 AntiFeatures:
   NonFreeNet:
@@ -31,36 +30,9 @@ MaintainerNotes: |-
   from this build before scanning.
 
 Builds:
-  - versionName: "0.90"
-    versionCode: 7
-    commit: v0.90
-    subdir: .
-    timeout: 7200
-    ndk: 29.0.14206865
-    sudo: |-
-      mkdir -p /data
-      chown vagrant:vagrant /data
-    scandelete:
-      - app/src/sideload
-    prebuild: |-
-      ./scripts/fdroid-scan-source.sh
-    build: |-
-      export ANDROID_HOME=$$SDK$$
-      export ANDROID_SDK_ROOT=$$SDK$$
-      export ANDROID_NDK_HOME=$$NDK$$
-      export ANDROID_NDK_ROOT=$$NDK$$
-      export NDK=$$NDK$$
-      export POCKETSYNC_VERSION_NAME=$$VERSION$$
-      export POCKETSYNC_VERSION_CODE=$$VERCODE$$
-      export FDROID_NATIVE_SOURCE_REFS="$(./scripts/fdroid-native-source-refs.sh)"
-      ./scripts/build-fdroid-native-termux.sh --termux-mode host
-      export GO_ANDROID_IMAGE="host-$(cd native/tsnet-helper && go env GOVERSION)"
-      /home/vagrant/gradlew-fdroid/gradlew-fdroid -p . --no-daemon -Ppocketsync.versionName=$$VERSION$$ -Ppocketsync.versionCode=$$VERCODE$$ assembleFdroidRelease
-    output: app/build/outputs/apk/fdroidRelease/app-fdroidRelease-unsigned.apk
-
-  - versionName: "0.95"
-    versionCode: 8
-    commit: v0.95
+  - versionName: "1.0-beta"
+    versionCode: 9
+    commit: 24001b131aed7a2aecb8c2858963203d9723ae19
     subdir: .
     timeout: 7200
     ndk: 29.0.14206865
@@ -87,5 +59,5 @@ Builds:
 
 AutoUpdateMode: None
 UpdateCheckMode: None
-CurrentVersion: "0.95"
-CurrentVersionCode: 8
+CurrentVersion: "1.0-beta"
+CurrentVersionCode: 9
