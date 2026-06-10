@@ -29,7 +29,7 @@ Builds:
     commit: 24001b131aed7a2aecb8c2858963203d9723ae19
     timeout: 7200
     sudo: |-
-      apt-get install -y jq
+      apt-get install -y jq fuse-overlayfs
       mkdir -p /data
       chown vagrant:vagrant /data
     output: app/build/outputs/apk/fdroidRelease/app-fdroidRelease-unsigned.apk
