@@ -46,13 +46,19 @@ import com.ttv20.rsyncbackup.backup.BackupService
 import com.ttv20.rsyncbackup.backup.AndroidConstraintSnapshotReader
 import com.ttv20.rsyncbackup.model.AppState
 import com.ttv20.rsyncbackup.model.BackupLog
+import com.ttv20.rsyncbackup.model.BackupProfile
 import com.ttv20.rsyncbackup.model.ProfileValidator
 import com.ttv20.rsyncbackup.model.Route
 import com.ttv20.rsyncbackup.model.RunProgressPhase
 import com.ttv20.rsyncbackup.model.RunProgressState
 import com.ttv20.rsyncbackup.model.RunStatus
+import com.ttv20.rsyncbackup.model.ScheduleType
 import com.ttv20.rsyncbackup.model.Severity
 import com.ttv20.rsyncbackup.model.transferProgressPercent
+import com.ttv20.rsyncbackup.scheduling.ScheduleTriggerCalculator
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 @Composable
 internal fun DashboardScreen(
@@ -209,7 +215,7 @@ internal fun DashboardOverviewSection(state: AppState) {
 @Composable
 internal fun DashboardOverviewGrid(state: AppState, latestLog: BackupLog?) {
     val lastSuccess = state.profiles.mapNotNull { it.status.lastSuccessAt }.maxOrNull()
-    val nextRun = state.profiles.mapNotNull { it.status.nextRunAt }.minOrNull()
+    val nextRun = dashboardNextRunAt(state.profiles)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             DashboardOverviewMetric(
@@ -240,6 +246,22 @@ internal fun DashboardOverviewGrid(state: AppState, latestLog: BackupLog?) {
             )
         }
     }
+}
+
+internal fun dashboardNextRunAt(
+    profiles: List<BackupProfile>,
+    now: LocalDateTime? = null,
+    zone: ZoneId = ZoneId.systemDefault(),
+): String? {
+    val currentNow = now ?: LocalDateTime.now(zone)
+    return profiles
+        .asSequence()
+        .filter { it.schedule.type != ScheduleType.DISABLED }
+        .mapNotNull { profile ->
+            ScheduleTriggerCalculator.nextTriggerMillis(profile.schedule, currentNow, zone)
+                ?.let { Instant.ofEpochMilli(it).toString() }
+        }
+        .minOrNull()
 }
 
 @Composable
