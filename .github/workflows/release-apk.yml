@@ -38,10 +38,6 @@ jobs:
             exit 1
           fi
 
-          version_name="${RELEASE_TAG#v}"
-          echo "POCKETSYNC_VERSION_NAME=$version_name" >> "$GITHUB_ENV"
-          echo "POCKETSYNC_VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-
       - name: Check out release tag
         uses: actions/checkout@v4
         with:
@@ -49,7 +45,22 @@ jobs:
           fetch-depth: 1
 
       - name: Record release target
-        run: echo "RELEASE_TARGET_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          version_name="$(sed -nE 's/^pocketbackup\.versionName=(.+)$/\1/p' gradle.properties)"
+          version_code="$(sed -nE 's/^pocketbackup\.versionCode=([0-9]+)$/\1/p' gradle.properties)"
+
+          if [[ -z "$version_name" || -z "$version_code" ]]; then
+            echo "gradle.properties must define pocketbackup.versionName and pocketbackup.versionCode" >&2
+            exit 1
+          fi
+
+          if [[ "$RELEASE_TAG" != "v$version_name" ]]; then
+            echo "Release tag $RELEASE_TAG does not match pocketbackup.versionName=$version_name" >&2
+            exit 1
+          fi
+
+          echo "RELEASE_TARGET_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Restore Gradle cache
         uses: actions/cache@v4
@@ -107,10 +118,10 @@ jobs:
 
       - name: Prepare release signing
         env:
-          KEYSTORE_B64: ${{ secrets.POCKETSYNC_RELEASE_KEYSTORE_B64 }}
-          STORE_PASSWORD: ${{ secrets.POCKETSYNC_RELEASE_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.POCKETSYNC_RELEASE_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.POCKETSYNC_RELEASE_KEY_PASSWORD }}
+          KEYSTORE_B64: ${{ secrets.POCKETBACKUP_RELEASE_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.POCKETBACKUP_RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.POCKETBACKUP_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.POCKETBACKUP_RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -129,10 +140,10 @@ jobs:
           mkdir -p build/signing
           printf '%s' "$KEYSTORE_B64" | base64 -d > build/signing/release.jks
 
-          echo "POCKETSYNC_RELEASE_STORE_FILE=build/signing/release.jks" >> "$GITHUB_ENV"
-          echo "POCKETSYNC_RELEASE_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
-          echo "POCKETSYNC_RELEASE_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
-          echo "POCKETSYNC_RELEASE_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "POCKETBACKUP_RELEASE_STORE_FILE=build/signing/release.jks" >> "$GITHUB_ENV"
+          echo "POCKETBACKUP_RELEASE_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "POCKETBACKUP_RELEASE_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "POCKETBACKUP_RELEASE_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
 
       - name: Run unit tests
         run: ./gradlew --no-daemon testDebugUnitTest

@@ -34,12 +34,12 @@ fun normalizedVersionTag(tag: String): String =
         }
     }
 
-val releaseStoreFile = providers.environmentVariable("POCKETSYNC_RELEASE_STORE_FILE").orNull
-val releaseStorePassword = providers.environmentVariable("POCKETSYNC_RELEASE_STORE_PASSWORD").orNull
-val releaseKeyAlias = providers.environmentVariable("POCKETSYNC_RELEASE_KEY_ALIAS").orNull
-val releaseKeyPassword = providers.environmentVariable("POCKETSYNC_RELEASE_KEY_PASSWORD").orNull
-val pocketSyncVersionCode = providers.environmentVariable("POCKETSYNC_VERSION_CODE")
-    .orElse(providers.gradleProperty("pocketsync.versionCode"))
+val releaseStoreFile = providers.environmentVariable("POCKETBACKUP_RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("POCKETBACKUP_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("POCKETBACKUP_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("POCKETBACKUP_RELEASE_KEY_PASSWORD").orNull
+val pocketBackupVersionCode = providers.environmentVariable("POCKETBACKUP_VERSION_CODE")
+    .orElse(providers.gradleProperty("pocketbackup.versionCode"))
 val gitTagVersionName = providers.exec {
     commandLine(
         "sh",
@@ -52,9 +52,9 @@ val gitTagVersionName = providers.exec {
     environment("GIT_CONFIG_KEY_0", "safe.directory")
     environment("GIT_CONFIG_VALUE_0", rootProject.projectDir.absolutePath)
 }.standardOutput.asText.map(::normalizedVersionTag)
-val pocketSyncVersionName = providers.environmentVariable("POCKETSYNC_VERSION_NAME")
+val pocketBackupVersionName = providers.environmentVariable("POCKETBACKUP_VERSION_NAME")
     .orElse("")
-    .nonBlankOrElse(providers.gradleProperty("pocketsync.versionName"))
+    .nonBlankOrElse(providers.gradleProperty("pocketbackup.versionName"))
     .orElse("")
     .nonBlankOrElse(gitTagVersionName)
     .orElse("")
@@ -85,8 +85,8 @@ android {
         applicationId = "com.ttv20.rsyncbackup"
         minSdk = 29
         targetSdk = 36
-        versionCode = pocketSyncVersionCode.map { it.toInt() }.getOrElse(1)
-        versionName = pocketSyncVersionName.get()
+        versionCode = pocketBackupVersionCode.map { it.toInt() }.getOrElse(1)
+        versionName = pocketBackupVersionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["measureApiUrl"] = measureApiUrl.get()

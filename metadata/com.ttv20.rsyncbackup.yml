@@ -24,8 +24,8 @@ RepoType: git
 Repo: https://codeberg.org/ttv20/PocketBackup.git
 
 Builds:
-  - versionName: 1.0-beta
-    versionCode: 9
+  - versionName: 1.0.0-beta.1
+    versionCode: 10
     commit: 24001b131aed7a2aecb8c2858963203d9723ae19
     timeout: 7200
     sudo: |-
@@ -42,12 +42,12 @@ Builds:
       export ANDROID_NDK_HOME=$$NDK$$
       export ANDROID_NDK_ROOT=$$NDK$$
       export NDK=$$NDK$$
-      export POCKETSYNC_VERSION_NAME=$$VERSION$$
-      export POCKETSYNC_VERSION_CODE=$$VERCODE$$
+      export POCKETBACKUP_VERSION_NAME=$$VERSION$$
+      export POCKETBACKUP_VERSION_CODE=$$VERCODE$$
       export FDROID_NATIVE_SOURCE_REFS="$(./scripts/fdroid-native-source-refs.sh)"
       ./scripts/build-fdroid-native-termux.sh --termux-mode host
       export GO_ANDROID_IMAGE="host-$(cd native/tsnet-helper && go env GOVERSION)"
-      /home/vagrant/gradlew-fdroid/gradlew-fdroid -p . --no-daemon -Ppocketsync.versionName=$$VERSION$$ -Ppocketsync.versionCode=$$VERCODE$$ assembleFdroidRelease
+      /home/vagrant/gradlew-fdroid/gradlew-fdroid -p . --no-daemon -Ppocketbackup.versionName=$$VERSION$$ -Ppocketbackup.versionCode=$$VERCODE$$ assembleFdroidRelease
     ndk: 29.0.14206865
 
 MaintainerNotes: |-
@@ -57,7 +57,8 @@ MaintainerNotes: |-
   app/src/sideload contains upstream sideload-release prebuilts and is removed
   from this build before scanning.
 
-AutoUpdateMode: None
-UpdateCheckMode: None
-CurrentVersion: 1.0-beta
-CurrentVersionCode: 9
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[1-9][0-9]*\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$
+UpdateCheckData: gradle.properties|pocketbackup\.versionCode=(\d+)|.|pocketbackup\.versionName=(.+)
+CurrentVersion: 1.0.0-beta.1
+CurrentVersionCode: 10
