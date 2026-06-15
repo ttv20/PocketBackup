@@ -24,9 +24,9 @@ RepoType: git
 Repo: https://codeberg.org/ttv20/PocketBackup.git
 
 Builds:
-  - versionName: 1.0.0-beta.2
-    versionCode: 11
-    commit: v1.0.0-beta.2
+  - versionName: 1.0.0-beta.3
+    versionCode: 12
+    commit: v1.0.0-beta.3
     timeout: 7200
     sudo: |-
       apt-get install -y jq fuse-overlayfs
@@ -60,5 +60,5 @@ MaintainerNotes: |-
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
 UpdateCheckData: gradle.properties|pocketbackup\.versionCode=(\d+)|.|pocketbackup\.versionName=(.+)
-CurrentVersion: 1.0.0-beta.2
-CurrentVersionCode: 11
+CurrentVersion: 1.0.0-beta.3
+CurrentVersionCode: 12

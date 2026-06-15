@@ -54,11 +54,11 @@ fun isOfficialPocketBackupRemote(url: String): Boolean {
         .trim()
         .removeSuffix("/")
         .removeSuffix(".git")
+        .removePrefix("https://")
+        .removePrefix("http://")
         .replace("ssh://git@", "")
         .replace("git@", "")
         .replace(":", "/")
-        .removePrefix("https://")
-        .removePrefix("http://")
         .lowercase()
 
     return normalized in setOf(

@@ -204,6 +204,8 @@ import com.ttv20.rsyncbackup.model.Severity
 import com.ttv20.rsyncbackup.model.SshPrivateKeyExportCrypto
 import com.ttv20.rsyncbackup.model.SshPrivateKeyExportPayload
 import com.ttv20.rsyncbackup.model.TargetMode
+import com.ttv20.rsyncbackup.model.TailscaleStateExportCrypto
+import com.ttv20.rsyncbackup.model.TailscaleStateExportPayload
 import com.ttv20.rsyncbackup.model.TailscaleStateMetadata
 import com.ttv20.rsyncbackup.model.ThemePreference
 import com.ttv20.rsyncbackup.model.allScheduleWeekDays
@@ -263,11 +265,17 @@ private enum class SettingsExportAction {
     Save,
 }
 
+private enum class SettingsImportSource {
+    Paste,
+    File,
+}
+
 private val MainScreens = listOf(Screen.Dashboard, Screen.Profiles, Screen.Targets, Screen.Logs)
 private const val MIN_PORT = 1
 private const val MAX_PORT = 65535
 private const val IMPORTED_SSH_PRIVATE_KEY_ALIAS = "imported-ssh-private-key"
 private const val IMPORTED_SSH_PASSPHRASE_ALIAS = "imported-ssh-passphrase"
+private const val IMPORTED_TAILSCALE_STATE_ALIAS = "imported-tailscale-state"
 private const val PERMISSION_ALL_FILES_ACCESS = "all_files_access"
 private const val PERMISSION_BATTERY_OPTIMIZATION = "battery_optimization"
 private const val PERMISSION_EXACT_ALARM = "exact_alarm"
@@ -846,6 +854,7 @@ private fun OnboardingFlow(
     }
     var dryRunResult by remember { mutableStateOf<DryRunResult?>(null) }
     var childBackHandler by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var exitAfterImportedPermissions by remember { mutableStateOf(false) }
     var welcomeDiagnosticsEnabled by rememberSaveable {
         mutableStateOf(
             state.settings.diagnosticsEnabled
@@ -868,6 +877,12 @@ private fun OnboardingFlow(
             remotePath = profileDraft.remotePath,
             targetMode = defaultTargetModeFor(selectedTarget, profileDraft.targetMode),
         )
+    }
+    LaunchedEffect(exitAfterImportedPermissions, permissions.allRequiredGranted) {
+        if (exitAfterImportedPermissions && permissions.allRequiredGranted) {
+            exitAfterImportedPermissions = false
+            onExitToDashboard(true)
+        }
     }
 
     fun saveTargetDraft() {
@@ -898,6 +913,18 @@ private fun OnboardingFlow(
 
     fun goTo(targetStep: OnboardingStep) {
         currentStep = targetStep.name
+    }
+
+    fun exitToDashboardAfterImportWhenReady() {
+        val refreshedPermissions = PermissionStateReader(context).read()
+        onRefreshPermissions()
+        if (refreshedPermissions.allRequiredGranted) {
+            exitAfterImportedPermissions = false
+            onExitToDashboard(true)
+        } else {
+            exitAfterImportedPermissions = true
+            goTo(OnboardingStep.Permissions)
+        }
     }
 
     fun runPendingNavigation(action: PendingOnboardingNavigation) {
@@ -997,6 +1024,9 @@ private fun OnboardingFlow(
             ) { targetStep ->
                 when (targetStep) {
                     OnboardingStep.Welcome -> WelcomeStep(
+                        state = state,
+                        repository = repository,
+                        secretStore = secretStore,
                         diagnosticsEnabled = welcomeDiagnosticsEnabled,
                         onDiagnosticsEnabledChange = { welcomeDiagnosticsEnabled = it },
                         onStart = {
@@ -1010,11 +1040,18 @@ private fun OnboardingFlow(
                             updateDiagnosticsConsent(context, repository, welcomeDiagnosticsEnabled)
                             onExitToDashboard(false)
                         },
+                        onImportSuccess = { exitToDashboardAfterImportWhenReady() },
                     )
                     OnboardingStep.Permissions -> OnboardingPermissionsStep(
                         permissions = permissions,
                         onRefreshPermissions = onRefreshPermissions,
-                        onContinue = { goTo(OnboardingStep.Tailscale) },
+                        onContinue = {
+                            if (exitAfterImportedPermissions) {
+                                exitToDashboardAfterImportWhenReady()
+                            } else {
+                                goTo(OnboardingStep.Tailscale)
+                            }
+                        },
                     )
                     OnboardingStep.Tailscale -> OnboardingWrappedScreen(
                         onContinue = { goTo(OnboardingStep.NewTarget) },
@@ -1070,14 +1107,19 @@ private fun OnboardingFlow(
 
 @Composable
 private fun WelcomeStep(
+    state: AppState,
+    repository: AppRepository,
+    secretStore: SecretStore,
     diagnosticsEnabled: Boolean,
     onDiagnosticsEnabledChange: (Boolean) -> Unit,
     onStart: () -> Unit,
     onSkip: () -> Unit,
+    onImportSuccess: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -1103,6 +1145,14 @@ private fun WelcomeStep(
                     Text("Skip")
                 }
             }
+        }
+        SectionCard {
+            ConfigurationImportSection(
+                state = state,
+                repository = repository,
+                secretStore = secretStore,
+                onImported = onImportSuccess,
+            )
         }
     }
 }
@@ -1416,6 +1466,19 @@ private fun setupChecklistForProfile(
     state: AppState,
     permissions: com.ttv20.rsyncbackup.permissions.AppPermissionState,
     constraintSnapshot: ConstraintSnapshot,
+): List<SetupChecklistItem> =
+    listOf(setupPermissionChecklistItem(permissions)) +
+        profileSetupChecklistForProfile(profile, state, constraintSnapshot)
+
+private fun setupPermissionChecklistItem(
+    permissions: com.ttv20.rsyncbackup.permissions.AppPermissionState,
+): SetupChecklistItem =
+    SetupChecklistItem("Permissions approved", permissions.allRequiredGranted, "Grant permissions", OnboardingStep.Permissions)
+
+private fun profileSetupChecklistForProfile(
+    profile: BackupProfile,
+    state: AppState,
+    constraintSnapshot: ConstraintSnapshot,
 ): List<SetupChecklistItem> {
     val target = state.targets.firstOrNull { it.id == profile.targetId }
     val trusted = target != null && state.trustedHostFingerprints.any {
@@ -1426,7 +1489,6 @@ private fun setupChecklistForProfile(
         snapshot = constraintSnapshot,
     )
     return listOf(
-        SetupChecklistItem("Permissions approved", permissions.allRequiredGranted, "Grant permissions", OnboardingStep.Permissions),
         SetupChecklistItem("Target fingerprint trusted", trusted, "Trust fingerprint", OnboardingStep.NewTarget),
         SetupChecklistItem(
             "Target connected",
@@ -1679,9 +1741,18 @@ private fun DashboardScreen(
             item {
                 DashboardOverviewSection(state)
             }
+            val permissionChecklistItem = setupPermissionChecklistItem(permissions)
+            if (!permissionChecklistItem.complete) {
+                item {
+                    SetupRepairCard(
+                        checklist = listOf(permissionChecklistItem),
+                        onOpenStep = { onStartOnboarding(OnboardingStep.Permissions) },
+                    )
+                }
+            }
             items(state.profiles, key = { it.id }) { profile ->
                 val issues = ProfileValidator.validate(profile, state)
-                val checklist = setupChecklistForProfile(profile, state, permissions, constraintSnapshot)
+                val checklist = profileSetupChecklistForProfile(profile, state, constraintSnapshot)
                 val isRunningProfile = state.queue.runningProfileId == profile.id
                 val liveProgress = state.runProgress.takeIf { it.profileId == profile.id && isRunningProfile }
                 val target = state.targets.firstOrNull { it.id == profile.targetId }
@@ -4616,15 +4687,34 @@ private data class ConfigurationImportResult(
     val message: String,
 )
 
+private fun ExportDocument.protectedDataLabels(): List<String> =
+    buildList {
+        if (sshPrivateKey != null) add("SSH private key")
+        if (tailscaleState != null) add("Tailscale connection")
+    }
+
+private fun List<String>.humanReadableList(): String =
+    when (size) {
+        0 -> ""
+        1 -> single()
+        2 -> "${this[0]} and ${this[1]}"
+        else -> dropLast(1).joinToString(", ") + ", and " + last()
+    }
+
+private fun invalidConfigurationImportMessage(source: SettingsImportSource): String =
+    when (source) {
+        SettingsImportSource.Paste -> "Clipboard does not contain a Pocket Backup configuration export."
+        SettingsImportSource.File -> "Selected file is not a Pocket Backup configuration export."
+    }
+
 private fun configurationExportText(
     state: AppState,
     secretStore: SecretStore,
-    privateKeyPassword: String? = null,
+    protectedDataPassword: String? = null,
 ): String {
-    val encryptedPrivateKey = privateKeyPassword?.let { password ->
+    val encryptedPrivateKey = protectedDataPassword?.let { password ->
         val keySettings = state.sshKeySettings
-        val privateKeyAlias = keySettings.privateKeySecretAlias
-            ?: error("No SSH private key is configured")
+        val privateKeyAlias = keySettings.privateKeySecretAlias ?: return@let null
         val privateKeyBytes = secretStore.get(privateKeyAlias)
             ?: error("SSH private key is missing from secure storage")
         val passphrase = keySettings.passphraseSecretAlias?.let { alias ->
@@ -4640,48 +4730,99 @@ private fun configurationExportText(
             password = password,
         )
     }
-    return ExportCodec.encode(state.toExportDocument(sshPrivateKey = encryptedPrivateKey))
+    val encryptedTailscaleState = protectedDataPassword?.let { password ->
+        val stateAlias = state.tailscale.stateSecretAlias ?: return@let null
+        val stateArchive = secretStore.get(stateAlias)
+            ?: error("Tailscale connection is missing from secure storage")
+        TailscaleStateExportCrypto.encrypt(
+            payload = TailscaleStateExportPayload.fromStateArchive(stateArchive),
+            password = password,
+        )
+    }
+    return ExportCodec.encode(
+        state.toExportDocument(
+            sshPrivateKey = encryptedPrivateKey,
+            tailscaleState = encryptedTailscaleState,
+        ),
+    )
 }
 
 private fun importedConfigurationState(
     currentState: AppState,
     document: ExportDocument,
     secretStore: SecretStore,
-    privateKeyPassword: String,
+    protectedDataPassword: String,
 ): ConfigurationImportResult {
     val importedState = currentState.withImportedConfiguration(document)
     val encryptedPrivateKey = document.sshPrivateKey
-        ?: return ConfigurationImportResult(importedState, "Configuration imported")
+    val encryptedTailscaleState = document.tailscaleState
 
-    if (privateKeyPassword.isBlank()) {
+    if (encryptedPrivateKey == null && encryptedTailscaleState == null) {
+        return ConfigurationImportResult(importedState, "Configuration imported")
+    }
+
+    if (protectedDataPassword.isBlank()) {
         return ConfigurationImportResult(
             state = importedState,
-            message = "Configuration imported without the private key",
+            message = "Configuration imported without protected data",
         )
     }
 
-    val payload = SshPrivateKeyExportCrypto.decrypt(encryptedPrivateKey, privateKeyPassword)
-    val publicKey = payload.publicKey ?: document.sshPublicKey
-    require(!publicKey.isNullOrBlank()) { "Private key export is missing its public key" }
-
-    secretStore.put(IMPORTED_SSH_PRIVATE_KEY_ALIAS, payload.privateKeyPem.toByteArray(Charsets.UTF_8))
-    if (payload.passphrase.isNullOrBlank()) {
-        secretStore.delete(IMPORTED_SSH_PASSPHRASE_ALIAS)
-    } else {
-        secretStore.put(IMPORTED_SSH_PASSPHRASE_ALIAS, payload.passphrase.toByteArray(Charsets.UTF_8))
+    val privateKeyPayload = encryptedPrivateKey?.let {
+        SshPrivateKeyExportCrypto.decrypt(it, protectedDataPassword)
+    }
+    val tailscalePayload = encryptedTailscaleState?.let {
+        TailscaleStateExportCrypto.decrypt(it, protectedDataPassword)
+    }
+    val publicKey = privateKeyPayload?.publicKey ?: document.sshPublicKey
+    if (privateKeyPayload != null) {
+        require(!publicKey.isNullOrBlank()) { "Private key export is missing its public key" }
     }
 
-    return ConfigurationImportResult(
-        state = importedState.copy(
-            sshKeySettings = GlobalSshKeySettings(
+    privateKeyPayload?.let { payload ->
+        secretStore.put(IMPORTED_SSH_PRIVATE_KEY_ALIAS, payload.privateKeyPem.toByteArray(Charsets.UTF_8))
+        if (payload.passphrase.isNullOrBlank()) {
+            secretStore.delete(IMPORTED_SSH_PASSPHRASE_ALIAS)
+        } else {
+            secretStore.put(IMPORTED_SSH_PASSPHRASE_ALIAS, payload.passphrase.toByteArray(Charsets.UTF_8))
+        }
+    }
+    tailscalePayload?.let { payload ->
+        secretStore.put(IMPORTED_TAILSCALE_STATE_ALIAS, payload.stateArchiveBytes())
+    }
+
+    val restoredState = importedState.copy(
+        sshKeySettings = privateKeyPayload?.let { payload ->
+            GlobalSshKeySettings(
                 publicKey = publicKey,
                 privateKeySecretAlias = IMPORTED_SSH_PRIVATE_KEY_ALIAS,
                 customPrivateKeyLabel = "Imported key",
                 passphraseSecretAlias = IMPORTED_SSH_PASSPHRASE_ALIAS.takeIf { !payload.passphrase.isNullOrBlank() },
                 generatedAt = Instant.now().toString(),
-            ),
-        ),
-        message = "Configuration and private key imported",
+            )
+        } ?: importedState.sshKeySettings,
+        tailscale = tailscalePayload?.let {
+            importedState.tailscale.copy(
+                isConfigured = true,
+                stateSecretAlias = IMPORTED_TAILSCALE_STATE_ALIAS,
+                lastLoginAt = document.tailscale.lastLoginAt ?: Instant.now().toString(),
+                lastReachabilityTestAt = document.tailscale.lastReachabilityTestAt,
+                lastError = null,
+            )
+        } ?: importedState.tailscale,
+    )
+    val restoredLabels = buildList {
+        if (privateKeyPayload != null) add("private key")
+        if (tailscalePayload != null) add("Tailscale connection")
+    }
+    val message = if (restoredLabels.size == 1) {
+        "Configuration and ${restoredLabels.single()} imported"
+    } else {
+        "Configuration, ${restoredLabels.humanReadableList()} imported"
+    }
+    return ConfigurationImportResult(
+        state = restoredState,
+        message = message,
     )
 }
 
@@ -4770,6 +4911,232 @@ private fun trackPermissionResult(context: Context, permissionType: String, gran
     )
 }
 
+@Composable
+private fun ConfigurationImportSection(
+    state: AppState,
+    repository: AppRepository,
+    secretStore: SecretStore,
+    onImported: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var pendingImportDocument by remember { mutableStateOf<ExportDocument?>(null) }
+    var protectedImportPassword by remember { mutableStateOf("") }
+    var protectedImportError by remember { mutableStateOf<String?>(null) }
+    var importError by rememberSaveable { mutableStateOf<String?>(null) }
+    var importMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var importBusy by remember { mutableStateOf(false) }
+
+    fun importConfigurationDocument(
+        document: ExportDocument,
+        protectedDataPassword: String,
+        keepDialogOnFailure: Boolean,
+    ) {
+        importBusy = true
+        importError = null
+        importMessage = null
+        protectedImportError = null
+        diagnosticsController(context)?.trackEvent("import_started")
+        scope.launch {
+            val result = withContext(Dispatchers.Default) {
+                runCatching {
+                    importedConfigurationState(
+                        currentState = state,
+                        document = document,
+                        secretStore = secretStore,
+                        protectedDataPassword = protectedDataPassword,
+                    )
+                }
+            }
+            result.onSuccess { importResult ->
+                repository.update { importResult.state }
+                diagnosticsController(context)?.trackEvent(
+                    "import_finished",
+                    configurationCounts(document),
+                )
+                protectedImportPassword = ""
+                protectedImportError = null
+                pendingImportDocument = null
+                importError = null
+                importMessage = importResult.message
+                onImported()
+            }.onFailure {
+                (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.trackHandledException(
+                    it,
+                    mapOf(DiagnosticsAttributes.SOURCE to "settings_import"),
+                )
+                diagnosticsController(context)?.trackEvent(
+                    "import_failed",
+                    mapOf(DiagnosticsAttributes.FAILURE_CATEGORY to it.diagnosticsFailureCategory()),
+                )
+                importMessage = null
+                if (keepDialogOnFailure) {
+                    protectedImportError = it.message ?: "Configuration import failed"
+                } else {
+                    pendingImportDocument = null
+                    importError = it.message ?: "Configuration import failed"
+                }
+            }
+            importBusy = false
+        }
+    }
+
+    fun requestImport(text: String, source: SettingsImportSource) {
+        importError = null
+        importMessage = null
+        protectedImportError = null
+        pendingImportDocument = null
+        val document = runCatching { ExportCodec.decode(text) }
+            .onFailure {
+                diagnosticsController(context)?.trackEvent(
+                    "import_failed",
+                    mapOf(DiagnosticsAttributes.FAILURE_CATEGORY to it.diagnosticsFailureCategory()),
+                )
+                importError = invalidConfigurationImportMessage(source)
+            }
+            .getOrNull()
+            ?: return
+
+        if (document.protectedDataLabels().isNotEmpty()) {
+            pendingImportDocument = document
+            protectedImportPassword = ""
+            protectedImportError = null
+        } else {
+            importConfigurationDocument(
+                document = document,
+                protectedDataPassword = "",
+                keepDialogOnFailure = false,
+            )
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                ?: error("Could not open import file")
+        }.onSuccess { text ->
+            protectedImportPassword = ""
+            protectedImportError = null
+            pendingImportDocument = null
+            requestImport(text, SettingsImportSource.File)
+        }.onFailure {
+            importMessage = null
+            importError = it.message ?: "Configuration file read failed"
+        }
+    }
+
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Import", style = MaterialTheme.typography.titleMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    requestImport(
+                        text = clipboard.getText()?.text.orEmpty(),
+                        source = SettingsImportSource.Paste,
+                    )
+                },
+                enabled = !importBusy,
+            ) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Paste")
+            }
+            OutlinedButton(
+                onClick = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                enabled = !importBusy,
+            ) {
+                Icon(Icons.Outlined.Folder, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Choose file")
+            }
+        }
+        importMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        importError?.let { ErrorText(it) }
+    }
+
+    pendingImportDocument?.let { document ->
+        val protectedData = document.protectedDataLabels().humanReadableList()
+        AlertDialog(
+            onDismissRequest = {
+                if (!importBusy) {
+                    pendingImportDocument = null
+                    protectedImportPassword = ""
+                    protectedImportError = null
+                }
+            },
+            icon = { Icon(Icons.Outlined.VpnKey, contentDescription = null) },
+            title = { Text("Restore protected data?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "This export has encrypted $protectedData. Enter the password to restore it, or import without protected data.",
+                    )
+                    OutlinedTextField(
+                        protectedImportPassword,
+                        { protectedImportPassword = it },
+                        label = { Text("Export password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    protectedImportError?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !importBusy && protectedImportPassword.isNotBlank(),
+                    onClick = {
+                        importConfigurationDocument(
+                            document = document,
+                            protectedDataPassword = protectedImportPassword,
+                            keepDialogOnFailure = true,
+                        )
+                    },
+                ) {
+                    Text(if (importBusy) "Importing" else "Restore protected data")
+                }
+            },
+            dismissButton = {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        enabled = !importBusy,
+                        onClick = {
+                            importConfigurationDocument(
+                                document = document,
+                                protectedDataPassword = "",
+                                keepDialogOnFailure = false,
+                            )
+                        },
+                    ) {
+                        Text("Without protected data")
+                    }
+                    TextButton(
+                        enabled = !importBusy,
+                        onClick = {
+                            pendingImportDocument = null
+                            protectedImportPassword = ""
+                            protectedImportError = null
+                        },
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            },
+        )
+    }
+}
+
 private fun com.ttv20.rsyncbackup.permissions.AppPermissionState.isPermissionGranted(permissionType: String): Boolean =
     when (permissionType) {
         PERMISSION_ALL_FILES_ACCESS -> allFilesAccess
@@ -4794,11 +5161,6 @@ private fun SettingsScreen(
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var settings by remember(state.settings) { mutableStateOf(state.settings) }
-    var importText by rememberSaveable { mutableStateOf("") }
-    var importPrivateKeyPassword by remember { mutableStateOf("") }
-    var importError by rememberSaveable { mutableStateOf<String?>(null) }
-    var importMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    var importBusy by remember { mutableStateOf(false) }
     var exportMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var exportError by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingExportAction by remember { mutableStateOf<SettingsExportAction?>(null) }
@@ -4808,10 +5170,9 @@ private fun SettingsScreen(
     var privateKeyExportError by remember { mutableStateOf<String?>(null) }
     var exportBusy by remember { mutableStateOf(false) }
     val hasExportablePrivateKey = state.sshKeySettings.privateKeySecretAlias != null
+    val hasExportableTailscaleState = state.tailscale.stateSecretAlias != null
+    val hasExportableProtectedData = hasExportablePrivateKey || hasExportableTailscaleState
     val exportText = remember(state) { ExportCodec.encode(state.toExportDocument()) }
-    val importHasPrivateKey = remember(importText) {
-        runCatching { ExportCodec.decode(importText).sshPrivateKey != null }.getOrDefault(false)
-    }
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
@@ -4862,7 +5223,7 @@ private fun SettingsScreen(
         exportError = null
     }
 
-    fun exportConfiguration(action: SettingsExportAction, privateKeyPassword: String? = null) {
+    fun exportConfiguration(action: SettingsExportAction, protectedDataPassword: String? = null) {
         exportBusy = true
         exportError = null
         privateKeyExportError = null
@@ -4873,17 +5234,17 @@ private fun SettingsScreen(
                     configurationExportText(
                         state = state,
                         secretStore = secretStore,
-                        privateKeyPassword = privateKeyPassword,
+                        protectedDataPassword = protectedDataPassword,
                     )
                 }
             }
             result.onSuccess { text ->
-                val includesPrivateKey = privateKeyPassword != null
+                val includesProtectedData = protectedDataPassword != null
                 completeExport(
                     action = action,
                     text = text,
-                    message = if (includesPrivateKey) {
-                        "Configuration copied with password-protected private key"
+                    message = if (includesProtectedData) {
+                        "Configuration copied with password-protected data"
                     } else {
                         "Configuration copied"
                     },
@@ -4910,7 +5271,7 @@ private fun SettingsScreen(
     }
 
     fun requestExport(action: SettingsExportAction) {
-        if (hasExportablePrivateKey) {
+        if (hasExportableProtectedData) {
             pendingExportAction = action
             privateKeyExportPassword = ""
             privateKeyExportPasswordConfirmation = ""
@@ -4996,95 +5357,36 @@ private fun SettingsScreen(
             exportError?.let { ErrorText(it) }
         }
         SectionCard {
-            Text("Import", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(importText, { importText = it }, label = { Text("Configuration JSON") }, minLines = 6, modifier = Modifier.fillMaxWidth())
-            if (importHasPrivateKey) {
-                Text(
-                    "This export contains a password-protected SSH private key. Leave the password blank to import only the non-secret configuration.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedTextField(
-                    importPrivateKeyPassword,
-                    { importPrivateKeyPassword = it },
-                    label = { Text("Private key export password") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Button(
-                enabled = importText.isNotBlank() && !importBusy,
-                onClick = {
-                    importBusy = true
-                    importError = null
-                    importMessage = null
-                    diagnosticsController(context)?.trackEvent("import_started")
-                    val text = importText
-                    val privateKeyPassword = importPrivateKeyPassword
-                    scope.launch {
-                        val result = withContext(Dispatchers.Default) {
-                            runCatching {
-                                val document = ExportCodec.decode(text)
-                                document to importedConfigurationState(
-                                    currentState = state,
-                                    document = document,
-                                    secretStore = secretStore,
-                                    privateKeyPassword = privateKeyPassword,
-                                )
-                            }
-                        }
-                        result.onSuccess { (document, importResult) ->
-                            repository.update { importResult.state }
-                            diagnosticsController(context)?.trackEvent(
-                                "import_finished",
-                                configurationCounts(document),
-                            )
-                            importText = ""
-                            importPrivateKeyPassword = ""
-                            importError = null
-                            importMessage = importResult.message
-                        }.onFailure {
-                            (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.trackHandledException(
-                                it,
-                                mapOf(DiagnosticsAttributes.SOURCE to "settings_import"),
-                            )
-                            diagnosticsController(context)?.trackEvent(
-                                "import_failed",
-                                mapOf(DiagnosticsAttributes.FAILURE_CATEGORY to it.diagnosticsFailureCategory()),
-                            )
-                            importMessage = null
-                            importError = it.message
-                        }
-                        importBusy = false
-                    }
-                },
-            ) {
-                Icon(Icons.Outlined.UploadFile, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (importBusy) "Importing" else "Import")
-            }
-            importMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            importError?.let { ErrorText(it) }
+            ConfigurationImportSection(
+                state = state,
+                repository = repository,
+                secretStore = secretStore,
+                onImported = { onSelectScreen(Screen.Dashboard) },
+            )
         }
     }
 
     pendingExportAction?.let { action ->
         val passwordsMatch = privateKeyExportPassword == privateKeyExportPasswordConfirmation
+        val exportProtectedData = buildList {
+            if (hasExportablePrivateKey) add("SSH private key")
+            if (hasExportableTailscaleState) add("Tailscale connection")
+        }.humanReadableList()
         AlertDialog(
             onDismissRequest = {
                 if (!exportBusy) resetPrivateKeyExportDialog()
             },
             icon = { Icon(Icons.Outlined.Warning, contentDescription = null) },
-            title = { Text("Include private key in export?") },
+            title = { Text("Include protected data in export?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "The private key lets Pocket Backup sign in to your backup server. Exporting it is risky: anyone who gets it and its password can use that access. The normal export leaves it out.",
+                        "Export includes $exportProtectedData. Anyone with the file and password can use that access. The normal export leaves it out.",
                     )
                     OutlinedTextField(
                         privateKeyExportPassword,
                         { privateKeyExportPassword = it },
-                        label = { Text("Private key export password") },
+                        label = { Text("Export password") },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -5118,7 +5420,7 @@ private fun SettingsScreen(
                     enabled = !exportBusy && privateKeyExportPassword.isNotBlank() && passwordsMatch,
                     onClick = { exportConfiguration(action, privateKeyExportPassword) },
                 ) {
-                    Text(if (exportBusy) "Exporting" else "Include private key")
+                    Text(if (exportBusy) "Exporting" else "Include protected data")
                 }
             },
             dismissButton = {
@@ -5127,7 +5429,7 @@ private fun SettingsScreen(
                         enabled = !exportBusy,
                         onClick = { exportConfiguration(action) },
                     ) {
-                        Text("Without private key")
+                        Text("Without protected data")
                     }
                     TextButton(
                         enabled = !exportBusy,

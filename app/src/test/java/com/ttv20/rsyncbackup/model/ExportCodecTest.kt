@@ -1,5 +1,6 @@
 package com.ttv20.rsyncbackup.model
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -128,6 +129,36 @@ class ExportCodecTest {
         assertEquals(payload, SshPrivateKeyExportCrypto.decrypt(decodedPrivateKey, "export-password"))
         val error = assertThrows(IllegalArgumentException::class.java) {
             SshPrivateKeyExportCrypto.decrypt(decodedPrivateKey, "wrong-password")
+        }
+        assertTrue(error.message?.contains("incorrect") == true)
+    }
+
+    @Test
+    fun tailscaleStateExportIsEncryptedAndPasswordProtected() {
+        val payload = TailscaleStateExportPayload.fromStateArchive("tailscale-login-state".toByteArray())
+        val encrypted = TailscaleStateExportCrypto.encrypt(
+            payload = payload,
+            password = "export-password",
+            iterations = 100_000,
+        )
+        val encoded = ExportCodec.encode(
+            configuredState().toExportDocument(
+                now = "2026-06-03T00:00:00Z",
+                tailscaleState = encrypted,
+            ),
+        )
+
+        assertTrue(encoded.contains("\"tailscaleState\""))
+        assertFalse(encoded.contains("tailscale-login-state"))
+
+        val decoded = ExportCodec.decode(encoded)
+        val decodedTailscaleState = requireNotNull(decoded.tailscaleState)
+        assertArrayEquals(
+            payload.stateArchiveBytes(),
+            TailscaleStateExportCrypto.decrypt(decodedTailscaleState, "export-password").stateArchiveBytes(),
+        )
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            TailscaleStateExportCrypto.decrypt(decodedTailscaleState, "wrong-password")
         }
         assertTrue(error.message?.contains("incorrect") == true)
     }

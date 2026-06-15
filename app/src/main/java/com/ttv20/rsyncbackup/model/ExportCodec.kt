@@ -16,6 +16,7 @@ data class ExportDocument(
     val sshPublicKey: String? = null,
     val sshPrivateKey: EncryptedSshPrivateKeyExport? = null,
     val tailscale: ExportTailscaleMetadata,
+    val tailscaleState: EncryptedTailscaleStateExport? = null,
     val targets: List<TargetRecord>,
     val profiles: List<BackupProfile>,
     val trustedHostFingerprints: List<TrustedHostFingerprint>,
@@ -89,6 +90,7 @@ private fun String.cleanSsid(): String? =
 fun AppState.toExportDocument(
     now: String = Instant.now().toString(),
     sshPrivateKey: EncryptedSshPrivateKeyExport? = null,
+    tailscaleState: EncryptedTailscaleStateExport? = null,
 ): ExportDocument =
     ExportDocument(
         exportedAt = now,
@@ -104,6 +106,7 @@ fun AppState.toExportDocument(
             lastReachabilityTestAt = tailscale.lastReachabilityTestAt,
             keyExpiryAdviceAcknowledged = tailscale.keyExpiryAdviceAcknowledged,
         ),
+        tailscaleState = tailscaleState,
         targets = targets.map { it.copy(sshKeySettings = null) },
         profiles = profiles,
         trustedHostFingerprints = trustedHostFingerprints,
