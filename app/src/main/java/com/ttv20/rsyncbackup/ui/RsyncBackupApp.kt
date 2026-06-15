@@ -273,6 +273,8 @@ private const val PERMISSION_BATTERY_OPTIMIZATION = "battery_optimization"
 private const val PERMISSION_EXACT_ALARM = "exact_alarm"
 private const val PERMISSION_NOTIFICATIONS = "notifications"
 private const val PERMISSION_WIFI_STATE = "wifi_state"
+private const val PRIVACY_POLICY_URL =
+    "https://codeberg.org/ttv20/PocketBackup/src/branch/main/PRIVACY.md"
 
 private enum class OnboardingStep(val title: String) {
     Welcome("Welcome"),
@@ -1112,6 +1114,7 @@ private fun DiagnosticsConsentToggle(
     showFdroidCta: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = modifier.fillMaxWidth(),
@@ -1148,6 +1151,14 @@ private fun DiagnosticsConsentToggle(
                     )
                 }
             }
+        }
+        TextButton(
+            onClick = { openUrlInUserBrowser(context, PRIVACY_POLICY_URL) },
+            modifier = Modifier.testTag("diagnostics-privacy-policy-button"),
+        ) {
+            Icon(Icons.Outlined.OpenInBrowser, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Privacy policy")
         }
     }
 }

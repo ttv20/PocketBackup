@@ -20,6 +20,8 @@ local.properties
 .env.*
 !.env.example
 *.md
+!PRIVACY.md
+!docs/google-play-data-safety.md
 !docs/tailscale-tsnet-version-bisect.md
 !docs/setup-simplification-plan.md
 *.apk
