@@ -24,7 +24,7 @@ fun diagnosticsConfigValue(
         .orElse("")
         .nonBlankOrElse(providers.gradleProperty(propertyName))
         .nonBlankOrElse(officialDefault)
-        .orElse(defaultValue)
+        .nonBlankOrElse(providers.provider { defaultValue })
 
 fun configBooleanValue(envName: String, propertyName: String, defaultValue: Boolean = false): Provider<Boolean> =
     providers.environmentVariable(envName)
@@ -111,6 +111,10 @@ val diagnosticsUserOptInRequired = configBooleanValue(
     envName = "POCKETBACKUP_DIAGNOSTICS_USER_OPT_IN_REQUIRED",
     propertyName = "pocketbackup.diagnosticsUserOptInRequired",
 )
+val measureBuildUploadEnabled = configBooleanValue(
+    envName = "POCKETBACKUP_MEASURE_BUILD_UPLOAD_ENABLED",
+    propertyName = "measure.buildUploadEnabled",
+)
 val gitRemoteOriginUrl = providers.exec {
     commandLine("git", "config", "--get", "remote.origin.url")
     workingDir(rootProject.projectDir)
@@ -164,6 +168,15 @@ val openObserveAuthHeader = diagnosticsConfigValue(
     propertyName = "openobserve.authHeader",
     officialDefault = officialDiagnosticsDefault(officialOpenObserveAuthHeader),
 )
+val diagnosticsBackendConfigured = providers.provider {
+    val hasMeasure = measureApiUrl.get().isNotBlank() && measureApiKey.get().isNotBlank()
+    val hasDirectOpenObserve = openObserveIngestUrl.get().isNotBlank() && openObserveAuthHeader.get().isNotBlank()
+    val hasProxy = diagnosticsProxyUrl.get().isNotBlank()
+    hasMeasure || hasDirectOpenObserve || hasProxy
+}
+val measureBuildUploadConfigured = providers.provider {
+    measureBuildUploadEnabled.get() && measureApiUrl.get().isNotBlank() && measureApiKey.get().isNotBlank()
+}
 val fdroidNativeAssetsDir = rootProject.layout.projectDirectory.dir("native/fdroid-out/assets")
 val fdroidNativeJniLibsDir = rootProject.layout.projectDirectory.dir("native/fdroid-out/jniLibs")
 
@@ -187,6 +200,7 @@ android {
         buildConfigField("String", "OPENOBSERVE_INGEST_URL", quotedBuildConfig(openObserveIngestUrl.get()))
         buildConfigField("String", "OPENOBSERVE_AUTH_HEADER", quotedBuildConfig(openObserveAuthHeader.get()))
         buildConfigField("boolean", "OFFICIAL_DIAGNOSTICS_ENABLED", officialDiagnosticsConfigIncluded.get().toString())
+        buildConfigField("boolean", "DIAGNOSTICS_BACKEND_CONFIGURED", diagnosticsBackendConfigured.get().toString())
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -442,4 +456,8 @@ val stageFdroidReleaseForFdroidServer by tasks.registering(Copy::class) {
 
 tasks.matching { it.name == "assembleFdroidRelease" }.configureEach {
     finalizedBy(stageFdroidReleaseForFdroidServer)
+}
+
+tasks.matching { it.name.startsWith("upload") && it.name.endsWith("BuildToMeasure") }.configureEach {
+    enabled = measureBuildUploadConfigured.get()
 }

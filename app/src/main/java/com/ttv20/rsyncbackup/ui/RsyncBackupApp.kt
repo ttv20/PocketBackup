@@ -1090,9 +1090,9 @@ private fun WelcomeStep(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             DiagnosticsConsentToggle(
-                checked = diagnosticsEnabled,
+                checked = BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED && diagnosticsEnabled,
                 onCheckedChange = onDiagnosticsEnabledChange,
-                showFdroidCta = BuildConfig.IS_FDROID_BUILD && !diagnosticsEnabled,
+                diagnosticsAvailable = BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED,
                 modifier = Modifier.testTag("onboarding-diagnostics-toggle"),
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1111,7 +1111,7 @@ private fun WelcomeStep(
 private fun DiagnosticsConsentToggle(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    showFdroidCta: Boolean,
+    diagnosticsAvailable: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -1123,12 +1123,13 @@ private fun DiagnosticsConsentToggle(
             verticalAlignment = Alignment.Top,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onCheckedChange(!checked) }
+                .clickable(enabled = diagnosticsAvailable) { onCheckedChange(!checked) }
                 .padding(vertical = 4.dp),
         ) {
             Checkbox(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
+                enabled = diagnosticsAvailable,
                 modifier = Modifier.testTag("diagnostics-consent-checkbox"),
             )
             Column(
@@ -1137,19 +1138,23 @@ private fun DiagnosticsConsentToggle(
                     .weight(1f)
                     .padding(top = 11.dp),
             ) {
-                Text("Send diagnostics and error reports", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Helps find crashes, failed backups, and setup problems. No backup paths, server addresses, usernames, SSH keys, file names, rsync output, or Wi-Fi names are sent.",
+                    if (diagnosticsAvailable) {
+                        "Send diagnostics and error reports"
+                    } else {
+                        "Diagnostics unavailable in this build"
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    if (diagnosticsAvailable) {
+                        "Helps find crashes, failed backups, and setup problems. No backup paths, server addresses, usernames, SSH keys, file names, rsync output, or Wi-Fi names are sent."
+                    } else {
+                        "This build was compiled without a diagnostics endpoint, so nothing can be sent."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (showFdroidCta) {
-                    Text(
-                        "F-Droid builds keep this off unless you choose to help. You can enable it now or later in Settings.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
             }
         }
         TextButton(
@@ -4685,10 +4690,11 @@ private fun updateDiagnosticsConsent(
     repository: AppRepository,
     enabled: Boolean,
 ) {
+    val resolvedEnabled = enabled && BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED
     repository.update { state ->
-        state.copy(settings = state.settings.copy(diagnosticsEnabled = enabled))
+        state.copy(settings = state.settings.copy(diagnosticsEnabled = resolvedEnabled))
     }
-    (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.updateConsent(enabled)
+    (context.applicationContext as? RsyncBackupApplication)?.diagnostics?.updateConsent(resolvedEnabled)
 }
 
 private fun diagnosticsController(context: Context) =
@@ -4944,20 +4950,13 @@ private fun SettingsScreen(
         SectionCard {
             Text("Diagnostics and error reporting", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             DiagnosticsConsentToggle(
-                checked = state.settings.diagnosticsEnabled == true,
+                checked = BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED && state.settings.diagnosticsEnabled == true,
                 onCheckedChange = { enabled ->
                     updateDiagnosticsConsent(context, repository, enabled)
                 },
-                showFdroidCta = BuildConfig.IS_FDROID_BUILD && state.settings.diagnosticsEnabled != true,
+                diagnosticsAvailable = BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED,
                 modifier = Modifier.testTag("settings-diagnostics-toggle"),
             )
-            if (BuildConfig.IS_FDROID_BUILD && state.settings.diagnosticsEnabled != true) {
-                Text(
-                    "Opting in helps improve scheduled backup reliability on Android versions and devices that are hard to reproduce locally.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
         SectionCard {
             ThemePreferenceSelector(settings.themePreference) { preference ->

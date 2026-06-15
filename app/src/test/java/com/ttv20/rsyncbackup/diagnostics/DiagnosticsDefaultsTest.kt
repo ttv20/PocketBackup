@@ -16,6 +16,7 @@ class DiagnosticsDefaultsTest {
             diagnosticsConsentAllowsNetwork(
                 consent = settings.diagnosticsEnabled,
                 userOptInRequired = true,
+                diagnosticsBackendConfigured = true,
             ),
         )
     }
@@ -29,12 +30,32 @@ class DiagnosticsDefaultsTest {
             diagnosticsConsentAllowsNetwork(
                 consent = settings.diagnosticsEnabled,
                 userOptInRequired = false,
+                diagnosticsBackendConfigured = true,
             ),
         )
         assertFalse(
             diagnosticsConsentAllowsNetwork(
                 consent = false,
                 userOptInRequired = false,
+                diagnosticsBackendConfigured = true,
+            ),
+        )
+    }
+
+    @Test
+    fun backendDisabledNeverAllowsNetwork() {
+        assertFalse(
+            diagnosticsConsentAllowsNetwork(
+                consent = true,
+                userOptInRequired = true,
+                diagnosticsBackendConfigured = false,
+            ),
+        )
+        assertFalse(
+            diagnosticsConsentAllowsNetwork(
+                consent = null,
+                userOptInRequired = false,
+                diagnosticsBackendConfigured = false,
             ),
         )
     }
@@ -45,18 +66,28 @@ class DiagnosticsDefaultsTest {
             diagnosticsWelcomeDefaultChecked(
                 isFdroidBuild = false,
                 userOptInRequired = false,
+                diagnosticsBackendConfigured = true,
             ),
         )
         assertFalse(
             diagnosticsWelcomeDefaultChecked(
                 isFdroidBuild = true,
                 userOptInRequired = false,
+                diagnosticsBackendConfigured = true,
             ),
         )
         assertFalse(
             diagnosticsWelcomeDefaultChecked(
                 isFdroidBuild = false,
                 userOptInRequired = true,
+                diagnosticsBackendConfigured = true,
+            ),
+        )
+        assertFalse(
+            diagnosticsWelcomeDefaultChecked(
+                isFdroidBuild = false,
+                userOptInRequired = false,
+                diagnosticsBackendConfigured = false,
             ),
         )
     }

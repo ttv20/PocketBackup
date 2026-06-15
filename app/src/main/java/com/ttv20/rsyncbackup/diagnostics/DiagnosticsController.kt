@@ -28,11 +28,18 @@ class DiagnosticsController(private val application: Application) {
     }
 
     fun syncConsent(consent: Boolean?) {
-        consentStore.setConsent(consent)
-        applyConsent(consent)
+        val resolvedConsent = if (BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED) consent else false
+        consentStore.setConsent(resolvedConsent)
+        applyConsent(resolvedConsent)
     }
 
     fun updateConsent(enabled: Boolean) {
+        if (!BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED) {
+            stopMeasure()
+            consentStore.setConsent(false)
+            reporter = NoopDiagnosticsReporter
+            return
+        }
         val previous = consentStore.consent()
         if (enabled) {
             consentStore.setConsent(true)

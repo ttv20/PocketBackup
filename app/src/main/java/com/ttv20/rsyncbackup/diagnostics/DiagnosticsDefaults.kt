@@ -5,8 +5,11 @@ import com.ttv20.rsyncbackup.BuildConfig
 fun diagnosticsConsentAllowsNetwork(
     consent: Boolean?,
     userOptInRequired: Boolean = BuildConfig.DIAGNOSTICS_USER_OPT_IN_REQUIRED,
+    diagnosticsBackendConfigured: Boolean = BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED,
 ): Boolean =
-    if (userOptInRequired) {
+    if (!diagnosticsBackendConfigured) {
+        false
+    } else if (userOptInRequired) {
         consent == true
     } else {
         consent != false
@@ -15,5 +18,6 @@ fun diagnosticsConsentAllowsNetwork(
 fun diagnosticsWelcomeDefaultChecked(
     isFdroidBuild: Boolean = BuildConfig.IS_FDROID_BUILD,
     userOptInRequired: Boolean = BuildConfig.DIAGNOSTICS_USER_OPT_IN_REQUIRED,
+    diagnosticsBackendConfigured: Boolean = BuildConfig.DIAGNOSTICS_BACKEND_CONFIGURED,
 ): Boolean =
-    !isFdroidBuild && !userOptInRequired
+    diagnosticsBackendConfigured && !isFdroidBuild && !userOptInRequired
