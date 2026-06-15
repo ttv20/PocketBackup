@@ -6,9 +6,9 @@ import org.junit.Test
 class TailscaleNodeNameTest {
     @Test
     fun suggestedNodeNameUsesHostnameSafeSuffix() {
-        assertEquals("pixel-9-pro-rsync", suggestedTailscaleNodeName(" Pixel 9 Pro "))
-        assertEquals("tom-s-phone-rsync", suggestedTailscaleNodeName("Tom's Phone"))
-        assertEquals("android-phone-rsync", suggestedTailscaleNodeName("   "))
+        assertEquals("pixel-9-pro-pocketbackup", suggestedTailscaleNodeName(" Pixel 9 Pro "))
+        assertEquals("tom-s-phone-pocketbackup", suggestedTailscaleNodeName("Tom's Phone"))
+        assertEquals("android-phone-pocketbackup", suggestedTailscaleNodeName("   "))
     }
 
     @Test
@@ -55,8 +55,8 @@ class TailscaleNodeNameTest {
         val updated = state.withDetectedPhoneHostname("Pixel 9 Pro")
 
         assertEquals("Pixel 9 Pro", updated.settings.phoneHostname)
-        assertEquals("pixel-9-pro-rsync", updated.tailscale.nodeName)
-        assertEquals("pixel-9-pro-rsync", effectiveTailscaleNodeName(updated))
+        assertEquals("pixel-9-pro-pocketbackup", updated.tailscale.nodeName)
+        assertEquals("pixel-9-pro-pocketbackup", effectiveTailscaleNodeName(updated))
     }
 
     @Test
@@ -66,7 +66,18 @@ class TailscaleNodeNameTest {
 
         val updated = state.withUpdatedSettings(state.settings.copy(phoneHostname = "Pixel 9"))
 
-        assertEquals("pixel-9-rsync", updated.tailscale.nodeName)
+        assertEquals("pixel-9-pocketbackup", updated.tailscale.nodeName)
+    }
+
+    @Test
+    fun settingsUpdateRefreshesLegacyGeneratedTailscaleNodeName() {
+        val state = InitialData.appState("cache/")
+            .withDetectedPhoneHostname("Pixel 8")
+            .copy(tailscale = TailscaleStateMetadata(nodeName = "pixel-8-rsync"))
+
+        val updated = state.withUpdatedSettings(state.settings.copy(phoneHostname = "Pixel 9"))
+
+        assertEquals("pixel-9-pocketbackup", updated.tailscale.nodeName)
     }
 
     @Test

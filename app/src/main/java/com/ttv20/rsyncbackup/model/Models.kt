@@ -6,8 +6,11 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 private const val DEFAULT_PHONE_HOSTNAME = "android-phone"
+private const val TAILSCALE_NODE_NAME_SUFFIX = "pocketbackup"
+private const val LEGACY_TAILSCALE_NODE_NAME_SUFFIX = "rsync"
 private const val LEGACY_TAILSCALE_NODE_NAME = "android-rsync"
-private const val DEFAULT_TAILSCALE_NODE_NAME = "$DEFAULT_PHONE_HOSTNAME-rsync"
+private const val LEGACY_DEFAULT_TAILSCALE_NODE_NAME = "$DEFAULT_PHONE_HOSTNAME-$LEGACY_TAILSCALE_NODE_NAME_SUFFIX"
+private const val DEFAULT_TAILSCALE_NODE_NAME = "$DEFAULT_PHONE_HOSTNAME-$TAILSCALE_NODE_NAME_SUFFIX"
 private const val DEFAULT_SSH_KEY_NAME = "$DEFAULT_PHONE_HOSTNAME-pocket-backup"
 
 @Serializable
@@ -57,7 +60,7 @@ data class GlobalSshKeySettings(
 @Serializable
 data class TailscaleStateMetadata(
     val isConfigured: Boolean = false,
-    val nodeName: String = LEGACY_TAILSCALE_NODE_NAME,
+    val nodeName: String = DEFAULT_TAILSCALE_NODE_NAME,
     val stateSecretAlias: String? = null,
     val lastLoginAt: String? = null,
     val lastReachabilityTestAt: String? = null,
@@ -120,7 +123,10 @@ enum class TargetMode {
 }
 
 fun suggestedTailscaleNodeName(phoneHostname: String): String =
-    "${safeDeviceName(phoneHostname)}-rsync"
+    "${safeDeviceName(phoneHostname)}-$TAILSCALE_NODE_NAME_SUFFIX"
+
+private fun legacySuggestedTailscaleNodeName(phoneHostname: String): String =
+    "${safeDeviceName(phoneHostname)}-$LEGACY_TAILSCALE_NODE_NAME_SUFFIX"
 
 fun suggestedSshKeyName(phoneHostname: String): String =
     "${safeDeviceName(phoneHostname)}-pocket-backup"
@@ -189,8 +195,10 @@ private fun TailscaleStateMetadata.shouldUseSuggestedNodeName(phoneHostname: Str
     val stored = nodeName.trim()
     return stored.isBlank() ||
         stored == LEGACY_TAILSCALE_NODE_NAME ||
+        stored == LEGACY_DEFAULT_TAILSCALE_NODE_NAME ||
         stored == DEFAULT_TAILSCALE_NODE_NAME ||
-        stored == suggestedTailscaleNodeName(phoneHostname)
+        stored == suggestedTailscaleNodeName(phoneHostname) ||
+        stored == legacySuggestedTailscaleNodeName(phoneHostname)
 }
 
 private fun GlobalSshKeySettings.withSuggestedSshKeyName(phoneHostname: String): GlobalSshKeySettings {

@@ -7,13 +7,21 @@
 package com.ttv20.rsyncbackup.ui
 
 import android.app.Activity
+import android.app.ActivityOptions
+import android.app.PendingIntent
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.util.Log
 import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -22,6 +30,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -44,16 +53,20 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
 import com.ttv20.rsyncbackup.MainActivity
 import com.ttv20.rsyncbackup.model.AppState
 import com.ttv20.rsyncbackup.model.Route
@@ -63,6 +76,7 @@ import com.ttv20.rsyncbackup.model.suggestedTailscaleNodeName
 import com.ttv20.rsyncbackup.storage.AppRepository
 import com.ttv20.rsyncbackup.storage.SecretStore
 import com.ttv20.rsyncbackup.tailscale.TailscaleManager
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,6 +100,7 @@ internal fun TailscaleScreen(state: AppState, repository: AppRepository, secretS
     var busy by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
     var showSignOutWarning by rememberSaveable { mutableStateOf(false) }
+    var browserLoginRequest by remember { mutableStateOf<BrowserLoginRequest?>(null) }
     val tailscaleLastError = state.tailscale.lastError
     val connectionStatus = when {
         tailscaleLastError != null -> "Last route test failed"
@@ -130,6 +145,61 @@ internal fun TailscaleScreen(state: AppState, repository: AppRepository, secretS
             },
             dismissButton = {
                 TextButton(onClick = { showSignOutWarning = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+    browserLoginRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = { browserLoginRequest = null },
+            icon = { Icon(Icons.Outlined.OpenInBrowser, contentDescription = null) },
+            title = { Text("Choose browser") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    request.browsers.forEach { browser ->
+                        TextButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                browserLoginRequest = null
+                                startTailscaleBrowserLogin(
+                                    context = context,
+                                    secretStore = secretStore,
+                                    repository = repository,
+                                    scope = scope,
+                                    requestedNodeName = request.nodeName,
+                                    browserPackage = browser.packageName,
+                                    setBusy = { busy = it },
+                                    setMessage = { message = it },
+                                )
+                            },
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Start,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                browser.icon?.let { icon ->
+                                    Image(
+                                        bitmap = icon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                } ?: Icon(
+                                    Icons.Outlined.OpenInBrowser,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(browser.label)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { browserLoginRequest = null }) {
                     Text("Cancel")
                 }
             },
@@ -248,57 +318,48 @@ internal fun TailscaleScreen(state: AppState, repository: AppRepository, secretS
                     enabled = !busy && nodeName.isNotBlank(),
                     modifier = Modifier.testTag("tailscale-browser-login-button"),
                     onClick = {
-                        busy = true
-                        message = "Waiting for Tailscale login in browser"
                         val requestedNodeName = nodeName.trim().ifBlank { defaultNodeName }
-                        val browserOpened = AtomicBoolean(false)
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                TailscaleManager(context, secretStore).authenticateWithBrowser(
-                                    nodeName = requestedNodeName,
-                                ) { authUrl ->
-                                    if (browserOpened.compareAndSet(false, true)) {
-                                        scope.launch {
-                                            val opened = openUrlInUserBrowser(context, authUrl)
-                                            message = if (opened) {
-                                                "Complete Tailscale login in your browser"
-                                            } else {
-                                                "Could not open a browser for Tailscale login"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            val now = Instant.now().toString()
-                            repository.update { appState ->
-                                appState.copy(
-                                    tailscale = if (result.success) {
-                                        TailscaleStateMetadata(
-                                            isConfigured = true,
-                                            nodeName = requestedNodeName,
-                                            stateSecretAlias = result.stateSecretAlias,
-                                            lastLoginAt = now,
-                                            lastReachabilityTestAt = appState.tailscale.lastReachabilityTestAt,
-                                            lastError = null,
-                                            keyExpiryAdviceAcknowledged = appState.tailscale.keyExpiryAdviceAcknowledged,
-                                        )
-                                    } else {
-                                        appState.tailscale.copy(
-                                            nodeName = requestedNodeName,
-                                            lastError = browserLoginFailureMessage(result.output, browserOpened.get()),
-                                        )
-                                    },
+                        val defaultBrowserPackage = defaultCustomTabsBrowserPackage(context)
+                        val browserChoices = customTabsBrowserChoices(context)
+                        when {
+                            defaultBrowserPackage != null ->
+                                startTailscaleBrowserLogin(
+                                    context = context,
+                                    secretStore = secretStore,
+                                    repository = repository,
+                                    scope = scope,
+                                    requestedNodeName = requestedNodeName,
+                                    browserPackage = defaultBrowserPackage,
+                                    setBusy = { busy = it },
+                                    setMessage = { message = it },
                                 )
-                            }
-                            message = if (result.success) {
-                                "Connected as $requestedNodeName"
-                            } else {
-                                "Browser login failed"
-                            }
-                            busy = false
-                            if (result.success && browserOpened.get()) {
-                                returnToAppAfterBrowserLogin(context)
-                            }
+                            browserChoices.size > 1 ->
+                                browserLoginRequest = BrowserLoginRequest(
+                                    nodeName = requestedNodeName,
+                                    browsers = browserChoices,
+                                )
+                            browserChoices.size == 1 ->
+                                startTailscaleBrowserLogin(
+                                    context = context,
+                                    secretStore = secretStore,
+                                    repository = repository,
+                                    scope = scope,
+                                    requestedNodeName = requestedNodeName,
+                                    browserPackage = browserChoices.single().packageName,
+                                    setBusy = { busy = it },
+                                    setMessage = { message = it },
+                                )
+                            else ->
+                                startTailscaleBrowserLogin(
+                                    context = context,
+                                    secretStore = secretStore,
+                                    repository = repository,
+                                    scope = scope,
+                                    requestedNodeName = requestedNodeName,
+                                    browserPackage = null,
+                                    setBusy = { busy = it },
+                                    setMessage = { message = it },
+                                )
                         }
                     },
                 ) {
@@ -406,9 +467,82 @@ internal fun TailscaleScreen(state: AppState, repository: AppRepository, secretS
         }
     }
 }
+
+private fun startTailscaleBrowserLogin(
+    context: Context,
+    secretStore: SecretStore,
+    repository: AppRepository,
+    scope: CoroutineScope,
+    requestedNodeName: String,
+    browserPackage: String?,
+    setBusy: (Boolean) -> Unit,
+    setMessage: (String) -> Unit,
+) {
+    setBusy(true)
+    setMessage("Waiting for Tailscale login in browser")
+    val browserOpened = AtomicBoolean(false)
+    scope.launch {
+        val result = withContext(Dispatchers.IO) {
+            TailscaleManager(context, secretStore).authenticateWithBrowser(
+                nodeName = requestedNodeName,
+            ) { authUrl ->
+                if (browserOpened.compareAndSet(false, true)) {
+                    scope.launch {
+                        val opened = openUrlInUserBrowser(context, authUrl, browserPackage)
+                        setMessage(
+                            if (opened) {
+                                "Complete Tailscale login in your browser"
+                            } else {
+                                "Could not open a browser for Tailscale login"
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        val now = Instant.now().toString()
+        repository.update { appState ->
+            appState.copy(
+                tailscale = if (result.success) {
+                    TailscaleStateMetadata(
+                        isConfigured = true,
+                        nodeName = requestedNodeName,
+                        stateSecretAlias = result.stateSecretAlias,
+                        lastLoginAt = now,
+                        lastReachabilityTestAt = appState.tailscale.lastReachabilityTestAt,
+                        lastError = null,
+                        keyExpiryAdviceAcknowledged = appState.tailscale.keyExpiryAdviceAcknowledged,
+                    )
+                } else {
+                    appState.tailscale.copy(
+                        nodeName = requestedNodeName,
+                        lastError = browserLoginFailureMessage(result.output, browserOpened.get()),
+                    )
+                },
+            )
+        }
+        setMessage(
+            if (result.success) {
+                "Connected as $requestedNodeName"
+            } else {
+                "Browser login failed"
+            },
+        )
+        setBusy(false)
+        if (result.success && browserOpened.get()) {
+            returnToAppAfterBrowserLogin(context)
+        }
+    }
+}
+
 internal fun openUrlInUserBrowser(context: Context, url: String): Boolean {
+    return openUrlInUserBrowser(context, url, browserPackage = null)
+}
+
+private fun openUrlInUserBrowser(context: Context, url: String, browserPackage: String?): Boolean {
     val uri = Uri.parse(url)
-    val customTabsPackage = customTabsBrowserPackage(context)
+    val customTabsPackage = browserPackage ?: customTabsBrowserPackage(context)
+    Log.i(TAG, "Opening URL with Custom Tabs package: ${customTabsPackage ?: "default"}")
     val launchContext = context.findActivity() ?: context
     return try {
         val customTabsIntent = CustomTabsIntent.Builder()
@@ -423,18 +557,121 @@ internal fun openUrlInUserBrowser(context: Context, url: String): Boolean {
         customTabsIntent.launchUrl(launchContext, uri)
         true
     } catch (error: ActivityNotFoundException) {
+        Log.w(TAG, "Custom Tabs launch failed with no activity; falling back to VIEW intent", error)
         openUrlWithViewIntent(context, uri, customTabsPackage)
     } catch (error: IllegalArgumentException) {
+        Log.w(TAG, "Custom Tabs launch failed with invalid arguments; falling back to VIEW intent", error)
         openUrlWithViewIntent(context, uri, customTabsPackage)
     } catch (error: RuntimeException) {
+        Log.w(TAG, "Custom Tabs launch failed; falling back to VIEW intent", error)
         openUrlWithViewIntent(context, uri, customTabsPackage)
     }
 }
 
-internal fun customTabsBrowserPackage(context: Context): String? =
-    CustomTabsClient.getPackageName(context, PreferredCustomTabsPackages)
-        ?: CustomTabsClient.getPackageName(context, null)
-            ?.takeUnless { it in NonBrowserCustomTabsPackages || it.startsWith("fe.linksheet.") }
+internal fun customTabsBrowserPackage(context: Context): String? {
+    defaultCustomTabsBrowserPackage(context)?.let { return it }
+    customTabsBrowserChoices(context).firstOrNull()?.packageName?.let { return it }
+    return CustomTabsClient.getPackageName(context, null)
+        ?.takeUnless(::isNonBrowserCustomTabsPackage)
+}
+
+internal fun defaultCustomTabsBrowserPackage(context: Context): String? {
+    val servicePackages = customTabsServicePackages(context)
+        .filterNot(::isNonBrowserCustomTabsPackage)
+        .toSet()
+    return context.packageManager.resolveDefaultBrowserPackage()
+        ?.takeIf { it in servicePackages }
+}
+
+internal fun customTabsBrowserChoices(context: Context): List<BrowserChoice> {
+    val packageManager = context.packageManager
+    val preferredOrder = PreferredCustomTabsPackages
+        .withIndex()
+        .associate { it.value to it.index }
+    return customTabsServicePackages(context)
+        .filterNot(::isNonBrowserCustomTabsPackage)
+        .distinct()
+        .map { packageName ->
+            BrowserChoice(
+                packageName = packageName,
+                label = packageManager.applicationLabel(packageName),
+                icon = packageManager.applicationIcon(packageName),
+            )
+        }
+        .sortedWith(
+            compareBy<BrowserChoice> { preferredOrder[it.packageName] ?: Int.MAX_VALUE }
+                .thenBy { it.label },
+        )
+}
+
+private fun customTabsServicePackages(context: Context): List<String> {
+    val intent = Intent(CUSTOM_TABS_SERVICE_ACTION)
+    return context.packageManager.queryCustomTabsServices(intent)
+        .mapNotNull { it.serviceInfo?.packageName }
+        .distinct()
+}
+
+private fun PackageManager.queryCustomTabsServices(intent: Intent): List<ResolveInfo> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        queryIntentServices(intent, PackageManager.ResolveInfoFlags.of(0))
+    } else {
+        @Suppress("DEPRECATION")
+        queryIntentServices(intent, 0)
+    }
+
+private fun PackageManager.resolveDefaultBrowserPackage(): String? {
+    val intent = Intent(Intent.ACTION_VIEW, TAILSCALE_LOGIN_BASE_URI)
+        .addCategory(Intent.CATEGORY_BROWSABLE)
+    val resolveInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        resolveActivity(
+            intent,
+            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()),
+        )
+    } else {
+        @Suppress("DEPRECATION")
+        resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+    }
+    val activityInfo = resolveInfo?.activityInfo ?: return null
+    val packageName = activityInfo.packageName ?: return null
+    return packageName.takeUnless {
+        packageName == "android" ||
+            packageName == "com.android.intentresolver" ||
+            activityInfo.name.contains("Resolver", ignoreCase = true) ||
+            isNonBrowserCustomTabsPackage(packageName)
+    }
+}
+
+private fun PackageManager.applicationLabel(packageName: String): String =
+    runCatching {
+        val applicationInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            getApplicationInfo(packageName, 0)
+        }
+        getApplicationLabel(applicationInfo).toString()
+    }.getOrDefault(packageName)
+
+private fun PackageManager.applicationIcon(packageName: String): ImageBitmap? =
+    runCatching {
+        getApplicationIcon(packageName)
+            .toBitmap(width = BROWSER_ICON_SIZE_PX, height = BROWSER_ICON_SIZE_PX)
+            .asImageBitmap()
+    }.getOrNull()
+
+private fun isNonBrowserCustomTabsPackage(packageName: String): Boolean =
+    packageName in NonBrowserCustomTabsPackages || packageName.startsWith("fe.linksheet.")
+
+internal data class BrowserChoice(
+    val packageName: String,
+    val label: String,
+    val icon: ImageBitmap?,
+)
+
+private data class BrowserLoginRequest(
+    val nodeName: String,
+    val browsers: List<BrowserChoice>,
+)
 
 internal fun openUrlWithViewIntent(context: Context, uri: Uri, packageName: String?): Boolean =
     runCatching {
@@ -451,15 +688,63 @@ internal fun openUrlWithViewIntent(context: Context, uri: Uri, packageName: Stri
     }.isSuccess
 
 internal fun returnToAppAfterBrowserLogin(context: Context): Boolean =
+    (sendBrowserLoginReturnPendingIntent(context) || startBrowserLoginReturnActivity(context))
+        .also { returned ->
+            Log.i(TAG, "Tailscale browser login return requested; accepted=$returned")
+        }
+
+private fun sendBrowserLoginReturnPendingIntent(context: Context): Boolean =
+    runCatching {
+        val appContext = context.applicationContext
+        val pendingIntent = PendingIntent.getActivity(
+            appContext,
+            TAILSCALE_BROWSER_LOGIN_RETURN_REQUEST_CODE,
+            browserLoginReturnIntent(appContext),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            pendingIntentCreatorOptions(),
+        )
+        pendingIntent.send(appContext, 0, null, null, null, null, pendingIntentSenderOptions())
+    }.isSuccess
+
+private fun startBrowserLoginReturnActivity(context: Context): Boolean =
     runCatching {
         val launchContext = context.findActivity() ?: context
-        val intent = Intent(launchContext, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        if (launchContext !is Activity) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        launchContext.startActivity(intent)
+        launchContext.startActivity(browserLoginReturnIntent(launchContext))
     }.isSuccess
+
+internal fun browserLoginReturnIntent(context: Context): Intent =
+    Intent(context, MainActivity::class.java)
+        .addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP,
+        )
+        .putExtra(MainActivity.EXTRA_START_SCREEN, Screen.Tailscale.name)
+
+private fun pendingIntentCreatorOptions(): Bundle? =
+    backgroundActivityStartOptions()?.setPendingIntentCreatorBackgroundActivityStartMode(
+        browserLoginBackgroundActivityStartMode(),
+    )?.toBundle()
+
+private fun pendingIntentSenderOptions(): Bundle? =
+    backgroundActivityStartOptions()?.setPendingIntentBackgroundActivityStartMode(
+        browserLoginBackgroundActivityStartMode(),
+    )?.toBundle()
+
+private fun backgroundActivityStartOptions(): ActivityOptions? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        ActivityOptions.makeBasic()
+    } else {
+        null
+    }
+
+@Suppress("DEPRECATION")
+private fun browserLoginBackgroundActivityStartMode(): Int =
+    if (Build.VERSION.SDK_INT >= 36) {
+        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
+    } else {
+        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+    }
 
 private tailrec fun Context.findActivity(): Activity? =
     when (this) {
@@ -494,3 +779,9 @@ internal fun friendlyTailscaleError(error: String): String =
             conciseFeedbackMessage(error)
         else -> conciseFeedbackMessage(error)
     }
+
+private const val TAILSCALE_BROWSER_LOGIN_RETURN_REQUEST_CODE = 42120
+private const val BROWSER_ICON_SIZE_PX = 96
+private const val TAG = "Pocket Backup Tailscale"
+private const val CUSTOM_TABS_SERVICE_ACTION = "android.support.customtabs.action.CustomTabsService"
+private val TAILSCALE_LOGIN_BASE_URI = Uri.parse("https://login.tailscale.com/")

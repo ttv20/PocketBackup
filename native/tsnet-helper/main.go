@@ -28,7 +28,7 @@ func main() {
 	registerAndroidInterfaceGetter()
 
 	stateDir := flag.String("state", "", "tailscale state directory")
-	hostname := flag.String("hostname", "android-rsync", "tailscale node name")
+	hostname := flag.String("hostname", "android-phone-pocketbackup", "tailscale node name")
 	timeout := flag.Duration("timeout", 30*time.Second, "connect timeout")
 	authKey := flag.String("authkey", "", "tailscale auth key; TS_AUTHKEY is also honored")
 	upOnly := flag.Bool("up", false, "authenticate/start tailscale and print status")
