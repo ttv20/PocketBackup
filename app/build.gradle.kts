@@ -6,7 +6,7 @@ plugins {
 }
 
 fun Provider<String>.nonBlankOrElse(fallback: Provider<String>): Provider<String> =
-    flatMap { value ->
+    orElse("").flatMap { value ->
         if (value.isBlank()) {
             fallback
         } else {
@@ -14,11 +14,26 @@ fun Provider<String>.nonBlankOrElse(fallback: Provider<String>): Provider<String
         }
     }
 
-fun diagnosticsConfigValue(envName: String, propertyName: String, defaultValue: String = ""): Provider<String> =
+fun diagnosticsConfigValue(
+    envName: String,
+    propertyName: String,
+    officialDefault: Provider<String>,
+    defaultValue: String = "",
+): Provider<String> =
     providers.environmentVariable(envName)
         .orElse("")
         .nonBlankOrElse(providers.gradleProperty(propertyName))
+        .nonBlankOrElse(officialDefault)
         .orElse(defaultValue)
+
+fun configBooleanValue(envName: String, propertyName: String, defaultValue: Boolean = false): Provider<Boolean> =
+    providers.environmentVariable(envName)
+        .orElse("")
+        .nonBlankOrElse(providers.gradleProperty(propertyName))
+        .orElse(defaultValue.toString())
+        .map { value ->
+            value.trim().lowercase() in setOf("1", "true", "yes", "on")
+        }
 
 fun quotedBuildConfig(value: String): String =
     "\"" + value
@@ -33,6 +48,24 @@ fun normalizedVersionTag(tag: String): String =
             value
         }
     }
+
+fun isOfficialPocketBackupRemote(url: String): Boolean {
+    val normalized = url
+        .trim()
+        .removeSuffix("/")
+        .removeSuffix(".git")
+        .replace("ssh://git@", "")
+        .replace("git@", "")
+        .replace(":", "/")
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .lowercase()
+
+    return normalized in setOf(
+        "codeberg.org/ttv20/pocketbackup",
+        "github.com/ttv20/pocketbackup",
+    )
+}
 
 val releaseStoreFile = providers.environmentVariable("POCKETBACKUP_RELEASE_STORE_FILE").orNull
 val releaseStorePassword = providers.environmentVariable("POCKETBACKUP_RELEASE_STORE_PASSWORD").orNull
@@ -65,15 +98,72 @@ val hasReleaseSigning = listOf(
     releaseKeyAlias,
     releaseKeyPassword,
 ).all { !it.isNullOrBlank() }
+
+val officialMeasureApiKey = "msrsh_13b78d97e130432a1f03a956c8a28e8ed00985d6b9269db4447a0227e0679aaa_fcc17818"
+val officialOpenObserveIngestUrl = "https://opos.ttv20.com/api/default/pocketbackup/_json"
+val officialOpenObserveAuthHeader = "Basic cG9ja2V0YmFja3VwQGFuZHJvaWQuYXBwOktHWUwxMno4dmdzMmF2ZTI="
+val emptyOfficialDiagnosticsDefault = providers.provider { "" }
+val officialDiagnosticsEnabled = configBooleanValue(
+    envName = "POCKETBACKUP_OFFICIAL_DIAGNOSTICS_ENABLED",
+    propertyName = "pocketbackup.officialDiagnosticsEnabled",
+)
+val diagnosticsUserOptInRequired = configBooleanValue(
+    envName = "POCKETBACKUP_DIAGNOSTICS_USER_OPT_IN_REQUIRED",
+    propertyName = "pocketbackup.diagnosticsUserOptInRequired",
+)
+val gitRemoteOriginUrl = providers.exec {
+    commandLine("git", "config", "--get", "remote.origin.url")
+    workingDir(rootProject.projectDir)
+    isIgnoreExitValue = true
+    environment("GIT_CONFIG_COUNT", "1")
+    environment("GIT_CONFIG_KEY_0", "safe.directory")
+    environment("GIT_CONFIG_VALUE_0", rootProject.projectDir.absolutePath)
+}.standardOutput.asText.map { it.trim() }
+val officialDiagnosticsConfigIncluded = providers.provider {
+    if (!officialDiagnosticsEnabled.get()) {
+        false
+    } else {
+        val remoteUrl = gitRemoteOriginUrl.orNull.orEmpty()
+        if (!isOfficialPocketBackupRemote(remoteUrl)) {
+            throw org.gradle.api.GradleException(
+                "pocketbackup.officialDiagnosticsEnabled=true can only use committed diagnostics defaults " +
+                    "from the official Pocket Backup repository. Set explicit diagnostics env vars " +
+                    "or Gradle properties for fork builds.",
+            )
+        }
+        true
+    }
+}
+
+fun officialDiagnosticsDefault(value: String): Provider<String> =
+    officialDiagnosticsConfigIncluded.map { included -> if (included) value else "" }
+
 val measureApiUrl = diagnosticsConfigValue(
     envName = "MEASURE_API_URL",
     propertyName = "measure.apiUrl",
+    officialDefault = emptyOfficialDiagnosticsDefault,
     defaultValue = "https://ingest.measure.sh",
 )
-val measureApiKey = diagnosticsConfigValue("MEASURE_API_KEY", "measure.apiKey")
-val diagnosticsProxyUrl = diagnosticsConfigValue("DIAGNOSTICS_PROXY_URL", "diagnostics.proxyUrl")
-val openObserveIngestUrl = diagnosticsConfigValue("OPENOBSERVE_INGEST_URL", "openobserve.ingestUrl")
-val openObserveAuthHeader = diagnosticsConfigValue("OPENOBSERVE_AUTH_HEADER", "openobserve.authHeader")
+val measureApiKey = diagnosticsConfigValue(
+    envName = "MEASURE_API_KEY",
+    propertyName = "measure.apiKey",
+    officialDefault = officialDiagnosticsDefault(officialMeasureApiKey),
+)
+val diagnosticsProxyUrl = diagnosticsConfigValue(
+    envName = "DIAGNOSTICS_PROXY_URL",
+    propertyName = "diagnostics.proxyUrl",
+    officialDefault = emptyOfficialDiagnosticsDefault,
+)
+val openObserveIngestUrl = diagnosticsConfigValue(
+    envName = "OPENOBSERVE_INGEST_URL",
+    propertyName = "openobserve.ingestUrl",
+    officialDefault = officialDiagnosticsDefault(officialOpenObserveIngestUrl),
+)
+val openObserveAuthHeader = diagnosticsConfigValue(
+    envName = "OPENOBSERVE_AUTH_HEADER",
+    propertyName = "openobserve.authHeader",
+    officialDefault = officialDiagnosticsDefault(officialOpenObserveAuthHeader),
+)
 val fdroidNativeAssetsDir = rootProject.layout.projectDirectory.dir("native/fdroid-out/assets")
 val fdroidNativeJniLibsDir = rootProject.layout.projectDirectory.dir("native/fdroid-out/jniLibs")
 
@@ -96,6 +186,7 @@ android {
         buildConfigField("String", "DIAGNOSTICS_PROXY_URL", quotedBuildConfig(diagnosticsProxyUrl.get()))
         buildConfigField("String", "OPENOBSERVE_INGEST_URL", quotedBuildConfig(openObserveIngestUrl.get()))
         buildConfigField("String", "OPENOBSERVE_AUTH_HEADER", quotedBuildConfig(openObserveAuthHeader.get()))
+        buildConfigField("boolean", "OFFICIAL_DIAGNOSTICS_ENABLED", officialDiagnosticsConfigIncluded.get().toString())
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -138,8 +229,10 @@ android {
 
     buildTypes.configureEach {
         val isFdroid = name.startsWith("fdroid", ignoreCase = true)
+        val userOptInRequired = isFdroid || diagnosticsUserOptInRequired.get()
         buildConfigField("boolean", "IS_FDROID_BUILD", isFdroid.toString())
-        buildConfigField("boolean", "DIAGNOSTICS_WELCOME_DEFAULT_CHECKED", (!isFdroid).toString())
+        buildConfigField("boolean", "DIAGNOSTICS_USER_OPT_IN_REQUIRED", userOptInRequired.toString())
+        buildConfigField("boolean", "DIAGNOSTICS_WELCOME_DEFAULT_CHECKED", (!isFdroid && !userOptInRequired).toString())
         buildConfigField("String", "BUILD_CHANNEL", quotedBuildConfig(name))
     }
 

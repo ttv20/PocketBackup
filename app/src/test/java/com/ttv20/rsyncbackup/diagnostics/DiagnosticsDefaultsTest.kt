@@ -8,16 +8,56 @@ import org.junit.Test
 
 class DiagnosticsDefaultsTest {
     @Test
-    fun consentDefaultIsNullAndDoesNotAllowNetwork() {
+    fun optInRequiredDefaultDoesNotAllowNetwork() {
         val settings = GlobalSettings()
 
         assertNull(settings.diagnosticsEnabled)
-        assertFalse(diagnosticsConsentAllowsNetwork(settings.diagnosticsEnabled))
+        assertFalse(
+            diagnosticsConsentAllowsNetwork(
+                consent = settings.diagnosticsEnabled,
+                userOptInRequired = true,
+            ),
+        )
     }
 
     @Test
-    fun welcomeDefaultIsCheckedForNormalBuildsOnly() {
-        assertTrue(diagnosticsWelcomeDefaultChecked(isFdroidBuild = false))
-        assertFalse(diagnosticsWelcomeDefaultChecked(isFdroidBuild = true))
+    fun optOutDefaultAllowsNetworkUntilDisabled() {
+        val settings = GlobalSettings()
+
+        assertNull(settings.diagnosticsEnabled)
+        assertTrue(
+            diagnosticsConsentAllowsNetwork(
+                consent = settings.diagnosticsEnabled,
+                userOptInRequired = false,
+            ),
+        )
+        assertFalse(
+            diagnosticsConsentAllowsNetwork(
+                consent = false,
+                userOptInRequired = false,
+            ),
+        )
+    }
+
+    @Test
+    fun welcomeDefaultIsCheckedForOptOutNormalBuildsOnly() {
+        assertTrue(
+            diagnosticsWelcomeDefaultChecked(
+                isFdroidBuild = false,
+                userOptInRequired = false,
+            ),
+        )
+        assertFalse(
+            diagnosticsWelcomeDefaultChecked(
+                isFdroidBuild = true,
+                userOptInRequired = false,
+            ),
+        )
+        assertFalse(
+            diagnosticsWelcomeDefaultChecked(
+                isFdroidBuild = false,
+                userOptInRequired = true,
+            ),
+        )
     }
 }
